@@ -19,7 +19,14 @@ export interface AircraftState {
   squawk: string | null;
   spi: boolean;
   position_source: number | null;
-  category: number | null;
+  /** ADS-B emitter category code: "A1"-"A7", "B0"-"B7", "C0"-"C4". */
+  category: string | null;
+  /** Tail registration e.g. "N336MC". */
+  registration: string | null;
+  /** ICAO aircraft type e.g. "B738", "A320", "C172". */
+  aircraft_type: string | null;
+  /** "none" | "general" | "lifeguard" | "minfuel" | "nordo" | "unlawful" | "downed" */
+  emergency: string | null;
 }
 
 export type OpenSkyStateVector = [
@@ -61,6 +68,11 @@ export function parseOpenSkyState(v: OpenSkyStateVector): AircraftState {
     squawk: v[14],
     spi: v[15],
     position_source: v[16],
-    category: v[17] ?? null,
+    // OpenSky encodes category as a small integer (0-20). Stringify so the
+    // field type stays compatible with adsb.lol's "A1"-"C4" codes.
+    category: v[17] != null ? String(v[17]) : null,
+    registration: null, // OpenSky doesn't provide it
+    aircraft_type: null, // OpenSky doesn't provide it
+    emergency: null, // OpenSky doesn't provide it
   };
 }

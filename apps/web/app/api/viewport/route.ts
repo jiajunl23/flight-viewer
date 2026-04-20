@@ -32,6 +32,8 @@ let upstreamInFlight: Promise<void> = Promise.resolve();
 type ALAircraft = {
   hex?: string;
   flight?: string;
+  r?: string;
+  t?: string;
   lat?: number;
   lon?: number;
   alt_baro?: number | "ground";
@@ -43,6 +45,7 @@ type ALAircraft = {
   spi?: number;
   seen?: number;
   category?: string;
+  emergency?: string;
 };
 type ALResponse = { ac?: ALAircraft[]; now?: number };
 
@@ -84,7 +87,13 @@ function parseAirplanesLive(a: ALAircraft): AircraftState | null {
     squawk: typeof a.squawk === "string" ? a.squawk : null,
     spi: a.spi === 1,
     position_source: null,
-    category: null,
+    category: typeof a.category === "string" ? a.category : null,
+    registration: typeof a.r === "string" ? a.r.trim() || null : null,
+    aircraft_type: typeof a.t === "string" ? a.t.trim() || null : null,
+    emergency:
+      typeof a.emergency === "string" && a.emergency !== "none"
+        ? a.emergency
+        : null,
   };
 }
 

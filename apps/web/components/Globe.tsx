@@ -7,9 +7,11 @@ import type { GlobeMethods } from "react-globe.gl";
 import type { AircraftState } from "shared";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import {
-  altitudeColorHex,
+  categoryScale,
+  isEmergency,
   MAX_HORIZON_S,
   reckon,
+  speedColorHex,
 } from "./DeadReckoning";
 import RegionPicker, { type Region } from "./RegionPicker";
 import FiltersPanel, {
@@ -124,7 +126,14 @@ function updatePlaneMesh(
   const headingRad = (state.true_track ?? 0) * (Math.PI / 180);
   mesh.rotateZ(-headingRad);
 
-  const colorHex = altitudeColorHex(r.alt, state.on_ground);
+  // Scale by ADS-B emitter category — heavies render bigger, helicopters smaller.
+  const scale = categoryScale(state.category);
+  mesh.scale.setScalar(scale);
+
+  // Color: emergency overrides everything with bright red; otherwise speed band.
+  const colorHex = isEmergency(state.emergency, state.squawk)
+    ? 0xff0000
+    : speedColorHex(state.velocity ?? 0);
   if (mesh.__lastColor !== colorHex) {
     (mesh.material as THREE.MeshBasicMaterial).color.setHex(colorHex);
     mesh.__lastColor = colorHex;
@@ -413,10 +422,22 @@ export default function Globe() {
       </div>
       <FiltersPanel value={filters} onChange={setFilters} />
       {selectedState && (
-        <div className="absolute bottom-3 right-3 z-10 bg-black/70 backdrop-blur rounded px-3 py-2 text-xs text-zinc-200 max-w-[280px] space-y-1">
+        <div
+          className={`absolute bottom-3 right-3 z-10 backdrop-blur rounded px-3 py-2 text-xs text-zinc-200 max-w-[300px] space-y-1 ${
+            isEmergency(selectedState.emergency, selectedState.squawk)
+              ? "bg-red-950/90 border border-red-500"
+              : "bg-black/70"
+          }`}
+        >
           <div className="flex items-center justify-between gap-2">
             <span className="font-semibold text-sm">
               {selectedState.callsign ?? selectedState.icao24}
+              {selectedState.registration &&
+                selectedState.registration !== selectedState.callsign && (
+                  <span className="ml-1.5 text-zinc-500 font-normal">
+                    ({selectedState.registration})
+                  </span>
+                )}
             </span>
             <div className="flex items-center gap-1">
               {isSignedIn && (
@@ -434,9 +455,24 @@ export default function Globe() {
               </button>
             </div>
           </div>
-          <div className="text-zinc-400">
-            {selectedState.origin_country ?? "—"}
-          </div>
+          {selectedState.aircraft_type && (
+            <div className="text-zinc-400 text-[11px] uppercase tracking-wide">
+              {selectedState.aircraft_type}
+              {selectedState.category && (
+                <span className="ml-2 text-zinc-600">
+                  · cat {selectedState.category}
+                </span>
+              )}
+            </div>
+          )}
+          {isEmergency(selectedState.emergency, selectedState.squawk) && (
+            <div className="text-red-300 font-semibold">
+              ⚠ EMERGENCY{" "}
+              {selectedState.emergency && selectedState.emergency !== "none"
+                ? selectedState.emergency.toUpperCase()
+                : `SQ ${selectedState.squawk}`}
+            </div>
+          )}
           <div>
             Alt:{" "}
             {(selectedState.baro_altitude ?? selectedState.geo_altitude ?? 0).toFixed(0)}m
@@ -446,6 +482,12 @@ export default function Globe() {
             Spd: {(selectedState.velocity ?? 0).toFixed(0)} m/s · Hdg:{" "}
             {(selectedState.true_track ?? 0).toFixed(0)}°
           </div>
+          {selectedState.squawk && (
+            <div className="text-zinc-500 text-[11px]">
+              Sq {selectedState.squawk}
+              {selectedState.spi && " · SPI"}
+            </div>
+          )}
         </div>
       )}
       {favorites.size > 0 && isSignedIn && (

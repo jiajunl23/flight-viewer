@@ -12,6 +12,10 @@ const BASE = "https://api.adsb.lol";
 type ALAircraft = {
   hex?: string;
   flight?: string;
+  r?: string; // tail registration
+  t?: string; // ICAO aircraft type
+  category?: string; // "A1".."C4"
+  emergency?: string;
   lat?: number;
   lon?: number;
   alt_baro?: number | "ground";
@@ -63,7 +67,13 @@ function parseAircraft(a: ALAircraft): AircraftState | null {
     squawk: typeof a.squawk === "string" ? a.squawk : null,
     spi: a.spi === 1,
     position_source: null,
-    category: null,
+    category: typeof a.category === "string" ? a.category : null,
+    registration: typeof a.r === "string" ? a.r.trim() || null : null,
+    aircraft_type: typeof a.t === "string" ? a.t.trim() || null : null,
+    emergency:
+      typeof a.emergency === "string" && a.emergency !== "none"
+        ? a.emergency
+        : null,
   };
 }
 
