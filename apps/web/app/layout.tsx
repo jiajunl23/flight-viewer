@@ -27,16 +27,8 @@ export default function RootLayout({
             </div>
             <div className="flex items-center gap-3">
               <Show when="signed-out">
-                <SignInButton>
-                  <button className="text-sm text-zinc-300 hover:text-white transition-colors">
-                    Sign in
-                  </button>
-                </SignInButton>
-                <SignUpButton>
-                  <button className="text-sm rounded-full bg-white text-black px-3 py-1.5 font-medium hover:bg-zinc-200 transition-colors">
-                    Sign up
-                  </button>
-                </SignUpButton>
+                <SignInButton mode="modal" />
+                <SignUpButton mode="modal" />
               </Show>
               <Show when="signed-in">
                 <UserButton />

@@ -32,6 +32,11 @@ yarn-debug.log*
 .vercel
 .railway
 
+# playwright / dev screenshots
+.playwright-mcp
+/phase*-*.png
+/page-*.png
+
 # coverage / turbo
 coverage
 .turbo

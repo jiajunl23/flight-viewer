@@ -20,6 +20,11 @@ const poller = new Poller({
 console.log(
   `[worker] starting — poll=${env.POLL_INTERVAL_MS}ms stale_ttl=${env.STALE_TTL_SECONDS}s`,
 );
+if (process.env.NODE_ENV !== "production") {
+  console.warn(
+    "[worker] LOCAL DEV — if the Railway worker is also live, you are DOUBLE-POLLING OpenSky and burning credits twice.",
+  );
+}
 poller.start();
 
 const shutdown = async (signal: string): Promise<void> => {

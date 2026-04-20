@@ -1,5 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { fetchStatesAll } from "./opensky.js";
+import {
+  creditsUsedToday,
+  DAILY_CREDIT_BUDGET,
+  fetchStatesAll,
+  MIN_INTERVAL_MS,
+  wouldExceedBudget,
+} from "./opensky.js";
 import { pruneStale, upsertAircraftStates } from "./supabase.js";
 
 export interface PollerConfig {
@@ -17,13 +23,20 @@ export class Poller {
   private currentTimer: NodeJS.Timeout | null = null;
   private pruneTimer: NodeJS.Timeout | null = null;
   private errorBackoffMs = 2_000;
+  private readonly intervalMs: number;
 
-  constructor(private readonly cfg: PollerConfig) {}
+  constructor(private readonly cfg: PollerConfig) {
+    // Hard floor: env can only slow us down, never speed us up.
+    this.intervalMs = Math.max(MIN_INTERVAL_MS, cfg.pollIntervalMs);
+    if (this.intervalMs !== cfg.pollIntervalMs) {
+      console.warn(
+        `[poller] POLL_INTERVAL_MS=${cfg.pollIntervalMs} below ${MIN_INTERVAL_MS}ms floor; using ${this.intervalMs}ms`,
+      );
+    }
+  }
 
   start(): void {
-    // Immediate first tick, then every pollIntervalMs.
     void this.tick();
-    // Prune every 5 minutes.
     this.pruneTimer = setInterval(() => void this.prune(), 5 * 60 * 1000);
   }
 
@@ -35,6 +48,15 @@ export class Poller {
 
   private async tick(): Promise<void> {
     if (this.stopped) return;
+
+    if (wouldExceedBudget()) {
+      console.warn(
+        `[poller] daily credit budget reached (${creditsUsedToday()}/${DAILY_CREDIT_BUDGET}); skipping tick`,
+      );
+      this.scheduleNext(this.intervalMs);
+      return;
+    }
+
     const start = Date.now();
     try {
       const { time, states } = await fetchStatesAll(
@@ -46,12 +68,19 @@ export class Poller {
       console.log(
         `[poller] t=${time} fetched=${states.length} upserted=${written} elapsed=${elapsed}ms`,
       );
-      this.errorBackoffMs = 2_000; // reset on success
-      this.scheduleNext(this.cfg.pollIntervalMs);
+      console.log(
+        `[opensky] credits today: ${creditsUsedToday()}/${DAILY_CREDIT_BUDGET} (budget 4000)`,
+      );
+      this.errorBackoffMs = 2_000;
+      this.scheduleNext(this.intervalMs);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[poller] error: ${message} — backoff ${this.errorBackoffMs}ms`);
-      this.scheduleNext(this.errorBackoffMs);
+      // Never reschedule faster than the floor, even on error.
+      const delay = Math.max(this.intervalMs, this.errorBackoffMs);
+      console.error(
+        `[poller] error: ${message} — next in ${delay}ms (backoff=${this.errorBackoffMs}ms, floor=${this.intervalMs}ms)`,
+      );
+      this.scheduleNext(delay);
       this.errorBackoffMs = Math.min(this.errorBackoffMs * 3, MAX_BACKOFF_MS);
     }
   }
