@@ -96,6 +96,7 @@ function updatePlaneMesh(
   state: AircraftState,
   globe: GlobeMethods | undefined,
   nowMs: number,
+  isSelected: boolean,
 ): void {
   const r = reckon(state, nowMs);
   if (!r || r.stale || !globe) {
@@ -127,17 +128,21 @@ function updatePlaneMesh(
   mesh.rotateZ(-headingRad);
 
   // Scale by ADS-B emitter category — heavies render bigger, helicopters smaller.
-  const scale = categoryScale(state.category);
+  // Selected aircraft get an additional 1.8× boost so they stand out.
+  const scale = categoryScale(state.category) * (isSelected ? 1.8 : 1);
   mesh.scale.setScalar(scale);
 
-  // Color: emergency overrides everything with bright red; otherwise speed band.
-  const colorHex = isEmergency(state.emergency, state.squawk)
-    ? 0xff0000
-    : speedColorHex(state.velocity ?? 0);
+  // Color: selected → cyan (most prominent), emergency → red, otherwise speed band.
+  const colorHex = isSelected
+    ? 0x22d3ee
+    : isEmergency(state.emergency, state.squawk)
+      ? 0xff0000
+      : speedColorHex(state.velocity ?? 0);
   if (mesh.__lastColor !== colorHex) {
     (mesh.material as THREE.MeshBasicMaterial).color.setHex(colorHex);
     mesh.__lastColor = colorHex;
   }
+  mesh.renderOrder = isSelected ? 2 : 1;
 }
 
 export default function Globe() {
@@ -152,6 +157,7 @@ export default function Globe() {
   const [selected, setSelected] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
   const { isSignedIn } = useUser();
   const { getToken: _getToken } = useAuth();
 
@@ -199,30 +205,55 @@ export default function Globe() {
       setSnapshot(map);
     })();
 
+    // Batch Realtime events to one setSnapshot per 500ms — at peak the worker
+    // upserts hundreds of rows per tile tick, and one render per row was
+    // causing the visible glitching.
+    const pendingUpserts = new Map<string, AircraftState>();
+    const pendingDeletes = new Set<string>();
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flush = (): void => {
+      flushTimer = null;
+      if (pendingUpserts.size === 0 && pendingDeletes.size === 0) return;
+      const upserts = Array.from(pendingUpserts.values());
+      const deletes = Array.from(pendingDeletes);
+      pendingUpserts.clear();
+      pendingDeletes.clear();
+      setSnapshot((prev) => {
+        const next = new Map(prev);
+        for (const s of upserts) next.set(s.icao24, s);
+        for (const id of deletes) next.delete(id);
+        return next;
+      });
+    };
+
+    const schedule = (): void => {
+      if (flushTimer) return;
+      flushTimer = setTimeout(flush, 500);
+    };
+
     const channel = supa
       .channel("aircraft_states_changes")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "aircraft_states" },
         (payload) => {
-          setSnapshot((prev) => {
-            const next = new Map(prev);
-            if (payload.eventType === "DELETE") {
-              next.delete((payload.old as AircraftState).icao24);
-            } else {
-              const state = payload.new as AircraftState;
-              if (state.latitude != null && state.longitude != null) {
-                next.set(state.icao24, state);
-              }
+          if (payload.eventType === "DELETE") {
+            pendingDeletes.add((payload.old as AircraftState).icao24);
+          } else {
+            const state = payload.new as AircraftState;
+            if (state.latitude != null && state.longitude != null) {
+              pendingUpserts.set(state.icao24, state);
             }
-            return next;
-          });
+          }
+          schedule();
         },
       )
       .subscribe();
 
     return () => {
       cancelled = true;
+      if (flushTimer) clearTimeout(flushTimer);
       void supa.removeChannel(channel);
     };
   }, []);
@@ -381,24 +412,53 @@ export default function Globe() {
     };
   }, [region]);
 
+  // Keep `selected` reachable from the rAF loop without triggering re-renders.
+  const selectedRef = useRef<string | null>(selected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
   // Per-frame dead-reckoning: walk the scene on every rAF and extrapolate
   // each plane mesh from its last known state. react-globe.gl's
   // customThreeObjectUpdate only fires when data changes, not per frame.
+  // Also tracks the selected aircraft's screen position so the popover can
+  // follow it (CSS transform via ref — no React re-render).
   useEffect(() => {
     let rafId = 0;
+    const projVec = new THREE.Vector3();
     const tick = () => {
       const globe = globeRef.current;
       const now = Date.now();
+      const sel = selectedRef.current;
       if (globe) {
         const scene = globe.scene();
+        let selectedMesh: PlaneMesh | null = null;
         scene.traverse((obj) => {
           const mesh = obj as PlaneMesh;
           const icao24 = mesh.__icao24;
           if (!icao24) return;
           const state = snapshotRef.current.get(icao24);
           if (!state) return;
-          updatePlaneMesh(mesh, state, globe, now);
+          const isSel = icao24 === sel;
+          updatePlaneMesh(mesh, state, globe, now, isSel);
+          if (isSel) selectedMesh = mesh;
         });
+
+        // Position popover near the selected aircraft.
+        if (selectedMesh && popoverRef.current) {
+          // Project world position to screen via Three's camera + canvas size.
+          // Using non-null assertion since selectedMesh is set inside the
+          // traverse closure above when isSel is true.
+          const m = selectedMesh as PlaneMesh;
+          projVec.copy(m.position).project(globe.camera());
+          const canvas = globe.renderer().domElement;
+          const x = (projVec.x * 0.5 + 0.5) * canvas.clientWidth;
+          const y = (-projVec.y * 0.5 + 0.5) * canvas.clientHeight;
+          const behindCamera = projVec.z > 1; // plane is on the far side of globe
+          popoverRef.current.style.transform = `translate3d(${x + 16}px, ${y + 12}px, 0)`;
+          popoverRef.current.style.opacity = behindCamera ? "0" : "1";
+          popoverRef.current.style.pointerEvents = behindCamera ? "none" : "auto";
+        }
       }
       rafId = requestAnimationFrame(tick);
     };
@@ -416,17 +476,23 @@ export default function Globe() {
           </div>
         )}
       </div>
-      <RegionPicker onChange={setRegion} />
-      <div className="absolute top-[84px] right-3 z-10">
-        <ThemeSwitcher value={theme} onChange={setTheme} />
+      <div className="absolute top-3 right-3 z-10 flex flex-col gap-2 items-end">
+        <RegionPicker onChange={setRegion} />
+        <div className="bg-black/60 backdrop-blur rounded px-2 py-1.5">
+          <ThemeSwitcher value={theme} onChange={setTheme} />
+        </div>
       </div>
       <FiltersPanel value={filters} onChange={setFilters} />
       {selectedState && (
         <div
-          className={`absolute bottom-3 right-3 z-10 backdrop-blur rounded px-3 py-2 text-xs text-zinc-200 max-w-[300px] space-y-1 ${
+          ref={popoverRef}
+          // Positioned via inline transform from the rAF loop (follows the
+          // selected aircraft on screen). Initial off-screen until first frame.
+          style={{ transform: "translate3d(-9999px, -9999px, 0)" }}
+          className={`absolute top-0 left-0 z-20 backdrop-blur rounded px-3 py-2 text-xs text-zinc-200 max-w-[280px] space-y-1 shadow-xl ${
             isEmergency(selectedState.emergency, selectedState.squawk)
-              ? "bg-red-950/90 border border-red-500"
-              : "bg-black/70"
+              ? "bg-red-950/95 border border-red-500"
+              : "bg-black/85 border border-cyan-500/60"
           }`}
         >
           <div className="flex items-center justify-between gap-2">
@@ -560,11 +626,13 @@ export default function Globe() {
           customThreeObjectUpdate={(obj: object, d: object) => {
             // Fires once when the data row changes (e.g. new server tick).
             // Per-frame interpolation happens in the rAF loop below.
+            const state = d as AircraftState;
             updatePlaneMesh(
               obj as PlaneMesh,
-              d as AircraftState,
+              state,
               globeRef.current,
               Date.now(),
+              state.icao24 === selectedRef.current,
             );
           }}
         />

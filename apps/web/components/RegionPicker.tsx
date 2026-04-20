@@ -40,9 +40,9 @@ export default function RegionPicker({ onChange }: RegionPickerProps) {
   };
 
   return (
-    <div className="absolute top-3 right-3 z-10 bg-black/60 backdrop-blur px-3 py-2 rounded text-xs max-w-[300px]">
+    <div className="bg-black/60 backdrop-blur px-3 py-2 rounded text-xs max-w-[260px]">
       <div className="text-zinc-400 mb-1.5">
-        Zoom to hub (live 1 Hz via airplanes.live)
+        Zoom to hub (live 1 Hz)
       </div>
       <div className="flex flex-wrap gap-1">
         {PRESETS.map((p) => (
