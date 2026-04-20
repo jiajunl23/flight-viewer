@@ -18,7 +18,7 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   TILE_INTERVAL_MS: z
     .string()
-    .default("1000")
+    .default("3000")
     .transform((v) => Number.parseInt(v, 10)),
   STALE_TTL_SECONDS: z
     .string()
@@ -32,8 +32,10 @@ const supabase = supabaseService(
   env.SUPABASE_SERVICE_ROLE_KEY,
 );
 
-// Clamp tile interval to >= 1000ms to respect adsb.lol's soft 1 req/sec cap.
-const tileInterval = Math.max(1_000, env.TILE_INTERVAL_MS);
+// Clamp tile interval to >= 3000ms. airplanes.live's rate limit is stricter
+// than their docs suggest when hit from datacenter IPs — 1 req/sec sustained
+// triggers ~75% 429s; 1 req / 3s empirically clears.
+const tileInterval = Math.max(3_000, env.TILE_INTERVAL_MS);
 
 const poller = new Poller({
   tileIntervalMs: tileInterval,

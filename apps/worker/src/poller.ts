@@ -26,10 +26,13 @@ export class Poller {
   private readonly intervalMs: number;
 
   constructor(private readonly cfg: PollerConfig) {
-    this.intervalMs = Math.max(1_000, cfg.tileIntervalMs);
+    // airplanes.live's rate limit is stricter than their documented 1 req/sec
+    // when hit continuously from a datacenter IP — sustained 1/s polling gets
+    // ~75% 429s. 3s/tile is the empirical floor where 429s stop.
+    this.intervalMs = Math.max(3_000, cfg.tileIntervalMs);
     if (this.intervalMs !== cfg.tileIntervalMs) {
       console.warn(
-        `[poller] tile interval ${cfg.tileIntervalMs}ms below 1000ms floor; using ${this.intervalMs}ms`,
+        `[poller] tile interval ${cfg.tileIntervalMs}ms below 3000ms floor; using ${this.intervalMs}ms`,
       );
     }
   }
