@@ -30,6 +30,13 @@ See `.env.example`. For production, set the same values in **Vercel** (web) and 
 - **Clerk**: [dashboard.clerk.com](https://dashboard.clerk.com) → API keys
 - **OpenSky** (OAuth2 client credentials): [opensky-network.org/my-opensky/account](https://opensky-network.org/my-opensky/account) → API Client → Create new client
 
+### Clerk ↔ Supabase JWT integration (one-time)
+
+Until this is done, RLS-protected writes to `user_preferences` from a signed-in user will fail.
+
+1. **Clerk dashboard** → *JWT Templates* → *New template* → name it **`supabase`**. Keep the default `sub` claim (it already maps to the Clerk user id). Save.
+2. **Supabase dashboard** → *Authentication* → *Sign-in providers* → *Clerk* (third-party auth) → enable, paste the Clerk Frontend API URL (e.g. `https://<subdomain>.clerk.accounts.dev`). Save. RLS policies using `auth.jwt() ->> 'sub'` will now match Clerk user ids.
+
 ## Deploy
 
 - **Vercel**: connect repo, root = `apps/web`, framework = Next.js, add env vars.
