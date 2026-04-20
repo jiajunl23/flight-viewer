@@ -75,10 +75,15 @@ export class Poller {
       this.scheduleNext(this.intervalMs);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // Never reschedule faster than the floor, even on error.
+      // Node's undici wraps the real failure in err.cause — surface it so
+      // "fetch failed" isn't the only thing we see.
+      const cause =
+        err instanceof Error && "cause" in err && err.cause
+          ? ` (cause: ${(err.cause as { code?: string; message?: string; errno?: number }).code ?? ""} ${(err.cause as { message?: string }).message ?? String(err.cause)})`
+          : "";
       const delay = Math.max(this.intervalMs, this.errorBackoffMs);
       console.error(
-        `[poller] error: ${message} — next in ${delay}ms (backoff=${this.errorBackoffMs}ms, floor=${this.intervalMs}ms)`,
+        `[poller] error: ${message}${cause} — next in ${delay}ms (backoff=${this.errorBackoffMs}ms, floor=${this.intervalMs}ms)`,
       );
       this.scheduleNext(delay);
       this.errorBackoffMs = Math.min(this.errorBackoffMs * 3, MAX_BACKOFF_MS);
