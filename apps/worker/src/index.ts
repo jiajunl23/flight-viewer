@@ -1,6 +1,18 @@
+import { Agent, setGlobalDispatcher } from "undici";
 import { workerEnvSchema } from "shared";
 import { Poller } from "./poller.js";
 import { supabaseService } from "./supabase.js";
+
+// Bump undici's default 10s connect timeout to 30s — OpenSky's auth endpoint
+// is in Europe, and Railway cold connections can exceed 10s, which shows up
+// as UND_ERR_CONNECT_TIMEOUT in the poller error log.
+setGlobalDispatcher(
+  new Agent({
+    connect: { timeout: 30_000 },
+    headersTimeout: 30_000,
+    bodyTimeout: 60_000,
+  }),
+);
 
 const env = workerEnvSchema.parse(process.env);
 
