@@ -1,0 +1,11 @@
+# Railway: ignore paths that aren't part of the worker build.
+# apps/web is deployed to Vercel, not Railway. The worker's Dockerfile still
+# sees these files at COPY time because .railwayignore does not affect the
+# Docker build context — it only trims what auto-detect scans and what the
+# default Railpack uploads. The worker doesn't need the web app, but the
+# Dockerfile handles that by only COPYing what it needs.
+apps/web/
+packages/shared/dist/
+node_modules/
+.next/
+.playwright-mcp/
