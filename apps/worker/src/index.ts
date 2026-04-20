@@ -1,5 +1,6 @@
 import { Agent, setGlobalDispatcher } from "undici";
 import { workerEnvSchema } from "shared";
+import { diagnose } from "./diagnose.js";
 import { Poller } from "./poller.js";
 import { supabaseService } from "./supabase.js";
 
@@ -37,7 +38,12 @@ if (process.env.NODE_ENV !== "production") {
     "[worker] LOCAL DEV — if the Railway worker is also live, you are DOUBLE-POLLING OpenSky and burning credits twice.",
   );
 }
-poller.start();
+
+// Run connectivity probe once at startup so prod logs tell us which layer
+// (DNS / TCP / TLS / HTTPS) is blocking the poll. Safe to keep in — runs
+// once, ~few seconds, and adds zero OpenSky credit cost (hits auth root
+// which doesn't count against the states/all quota).
+void diagnose().finally(() => poller.start());
 
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`[worker] ${signal} — shutting down`);
