@@ -42,7 +42,7 @@ const poller = new Poller({
 });
 
 console.log(
-  `[worker] starting — data=adsb.lol tile_interval=${tileInterval}ms stale_ttl=${env.STALE_TTL_SECONDS}s`,
+  `[worker] starting — data=airplanes.live tile_interval=${tileInterval}ms stale_ttl=${env.STALE_TTL_SECONDS}s`,
 );
 if (process.env.NODE_ENV !== "production") {
   console.warn(

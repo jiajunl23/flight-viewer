@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { fetchTile } from "./adsblol.js";
+import { fetchTile } from "./airplaneslive.js";
 import { pruneStale, upsertAircraftStates } from "./supabase.js";
 import { NA_TILES } from "./tiles.js";
 
