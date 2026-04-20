@@ -11,6 +11,7 @@ import {
   MAX_HORIZON_S,
   reckon,
 } from "./DeadReckoning";
+import RegionPicker, { type Region } from "./RegionPicker";
 
 const GlobeGL = dynamic(() => import("react-globe.gl"), {
   ssr: false,
@@ -86,6 +87,8 @@ export default function Globe() {
   const [snapshot, setSnapshot] = useState<Snapshot>(() => new Map());
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [visibleCount, setVisibleCount] = useState(0);
+  const [region, setRegion] = useState<Region | null>(null);
+  const [viewportCount, setViewportCount] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
 
@@ -174,6 +177,71 @@ export default function Globe() {
     setVisibleCount(liveData.length);
   }, [liveData]);
 
+  // Viewport polling: when the user has a focused region, hit /api/viewport
+  // once per second and merge the fresher airplanes.live data into the state
+  // map (viewport rows override world baseline because their last_contact is
+  // always newer — icao24 conflicts win the MAX(last_contact) check).
+  useEffect(() => {
+    if (!region) {
+      setViewportCount(null);
+      return;
+    }
+    let cancelled = false;
+
+    // Fly the camera to the region.
+    globeRef.current?.pointOfView(
+      { lat: region.lat, lng: region.lon, altitude: 0.45 },
+      1200,
+    );
+
+    let backoffMs = 1000;
+    const MIN_DELAY = 1000;
+    const MAX_BACKOFF = 15_000;
+
+    const loop = async () => {
+      while (!cancelled) {
+        const start = Date.now();
+        let ok = false;
+        try {
+          const res = await fetch(
+            `/api/viewport?lat=${region.lat}&lon=${region.lon}&radius=${region.radius}`,
+            { cache: "no-store" },
+          );
+          if (res.ok) {
+            const body = (await res.json()) as {
+              states: AircraftState[];
+              cached: boolean;
+              stale?: boolean;
+            };
+            if (cancelled) return;
+            setViewportCount(body.states.length);
+            setSnapshot((prev) => {
+              const next = new Map(prev);
+              for (const s of body.states) next.set(s.icao24, s);
+              return next;
+            });
+            // Success: reset backoff.
+            backoffMs = MIN_DELAY;
+            ok = true;
+          }
+        } catch (err) {
+          console.warn("[viewport] poll error", err);
+        }
+        if (!ok) {
+          backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF);
+        }
+        const elapsed = Date.now() - start;
+        const delay = Math.max(MIN_DELAY, backoffMs) - elapsed;
+        if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+      }
+    };
+    void loop();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [region]);
+
   // Per-frame dead-reckoning: walk the scene on every rAF and extrapolate
   // each plane mesh from its last known state. react-globe.gl's
   // customThreeObjectUpdate only fires when data changes, not per frame.
@@ -201,9 +269,15 @@ export default function Globe() {
 
   return (
     <div ref={containerRef} className="relative flex-1 overflow-hidden">
-      <div className="absolute top-3 left-3 z-10 text-xs text-zinc-400 bg-black/50 backdrop-blur px-2 py-1 rounded">
-        {visibleCount.toLocaleString()} aircraft
+      <div className="absolute top-3 left-3 z-10 text-xs text-zinc-400 bg-black/50 backdrop-blur px-2 py-1 rounded space-y-0.5">
+        <div>{visibleCount.toLocaleString()} aircraft</div>
+        {viewportCount !== null && region && (
+          <div className="text-emerald-400">
+            {region.name}: {viewportCount} live (1 Hz)
+          </div>
+        )}
       </div>
+      <RegionPicker onChange={setRegion} />
       {size.width > 0 && (
         <GlobeGL
           ref={globeRef}
