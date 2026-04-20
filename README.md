@@ -30,12 +30,18 @@ See `.env.example`. For production, set the same values in **Vercel** (web) and 
 - **Clerk**: [dashboard.clerk.com](https://dashboard.clerk.com) → API keys
 - **OpenSky** (OAuth2 client credentials): [opensky-network.org/my-opensky/account](https://opensky-network.org/my-opensky/account) → API Client → Create new client
 
-### Clerk ↔ Supabase JWT integration (one-time)
+### Clerk ↔ Supabase native Third-Party Auth (one-time, required)
 
-Until this is done, RLS-protected writes to `user_preferences` from a signed-in user will fail.
+Until this is done, RLS-protected reads/writes to `user_preferences` from a signed-in user will return empty rows or fail silently. The **old "supabase" JWT template flow was deprecated April 2025** — use the native Third-Party Auth integration below.
 
-1. **Clerk dashboard** → *JWT Templates* → *New template* → name it **`supabase`**. Keep the default `sub` claim (it already maps to the Clerk user id). Save.
-2. **Supabase dashboard** → *Authentication* → *Sign-in providers* → *Clerk* (third-party auth) → enable, paste the Clerk Frontend API URL (e.g. `https://<subdomain>.clerk.accounts.dev`). Save. RLS policies using `auth.jwt() ->> 'sub'` will now match Clerk user ids.
+1. **Clerk dashboard** → open https://dashboard.clerk.com/setup/supabase → click **Activate Supabase integration**. Clerk will show you a **Clerk domain** (looks like `https://<your-slug>.clerk.accounts.dev` or `https://clerk.<your-domain>`). Copy it.
+2. **Supabase dashboard** → *Authentication* → *Sign in / Providers* → *Third Party Auth* → *Add provider* → **Clerk** → paste the Clerk domain → *Save*.
+3. That's it — Supabase now verifies Clerk-issued session tokens. In code, `supabaseServer()` (see `apps/web/lib/supabase-server.ts`) uses Supabase's `accessToken` callback to forward the Clerk token on every request, so RLS policies using `auth.jwt() ->> 'sub'` match the Clerk user id automatically.
+
+**Notes:**
+- No JWT template needed; no shared secrets between Clerk and Supabase.
+- Tokens are refreshed per-request, so there's no stale-token concern.
+- If RLS still rejects requests after setup, double-check that the Clerk domain in Supabase matches the environment (dev/prod) your browser is signed into.
 
 ## Deploy
 

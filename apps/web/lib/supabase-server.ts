@@ -2,30 +2,31 @@ import { auth } from "@clerk/nextjs/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /**
- * Server-side Supabase client that forwards the current Clerk user's JWT
- * (via the "supabase" JWT template) so RLS policies on user_preferences
- * can authorize against auth.jwt() ->> 'sub'.
+ * Server-side Supabase client that uses Clerk's native Third-Party Auth
+ * integration (the successor to the deprecated "supabase" JWT template).
  *
- * Returns null when the caller is not signed in — routes should respond 401.
+ * `accessToken` is read fresh on every request, so RLS policies can evaluate
+ * auth.jwt() ->> 'sub' against the current Clerk user id.
+ *
+ * Requires: Clerk ↔ Supabase third-party auth integration configured in both
+ * dashboards. See README.
  */
-export async function supabaseServer(): Promise<SupabaseClient | null> {
-  const { getToken, userId } = await auth();
-  if (!userId) return null;
-  const token = await getToken({ template: "supabase" });
-  if (!token) return null;
-
+export function supabaseServer(): SupabaseClient {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
+      accessToken: async () => {
+        const { getToken } = await auth();
+        return (await getToken()) ?? null;
+      },
     },
   );
 }
 
 /**
- * Service-role client for privileged server work (e.g. seeding, admin jobs).
+ * Service-role client for privileged server work (seeds, admin jobs).
  * Bypasses RLS — never expose results to the client without re-authorization.
  */
 export function supabaseService(): SupabaseClient {
