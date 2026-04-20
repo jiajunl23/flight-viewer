@@ -45,15 +45,14 @@ The scope was pivoted from worldwide → North America during deployment because
                    └──────────────┘
 ```
 
-## Data source — airplanes.live
+## Data sources
 
-- **airplanes.live** is the single data provider. Free, no auth, 1 req/sec hard rate limit per server IP (enforced upstream). Point+radius endpoint only.
-- The worker (Railway) rotates through 20 predefined North American hub tiles (see `apps/worker/src/tiles.ts`) at 1 tile/sec → full continent refreshes every ~20s. Each tile is 250 nm radius.
-- The Next.js `/api/viewport` route (Vercel) also hits airplanes.live at 1 Hz when the user picks a hub in the Region Picker, giving dense local refresh. Different egress IP (Vercel's serverless fleet) so the 1 req/sec limits don't collide with the worker's.
-- **OpenSky (dormant)**: client code at `apps/worker/src/opensky.ts` stays in the repo but is unused. Railway's IP can't reach it (TCP handshake times out). A non-Railway deploy (Fly.io, local, VPS) can re-enable it by re-importing `fetchStatesAll` in `poller.ts`.
-- **adsb.lol + adsb.fi** are fully compatible drop-in replacements (same readsb/tar1090 response shape). If airplanes.live ever changes terms or requires a key, flipping to adsb.lol is a one-line import change.
+- **adsb.lol (worker, Railway)**: free, no auth, soft dynamic rate limit that empirically allows 1 req/3s from datacenter IPs. The worker rotates through 20 predefined North American hub tiles (see `apps/worker/src/tiles.ts`) at 1 tile / 3s → full continent refreshes every ~60s. Each tile is 250 nm radius.
+- **airplanes.live (frontend, Vercel)**: used by the Next.js `/api/viewport` route at 1 Hz when the user picks a hub. Vercel's serverless egress IPs get higher rate limits than datacenter IPs like Railway's, so it works fine there.
+- **Why split**: we tested airplanes.live from Railway — it rate-limited us to ~1 req/30s (much stricter than documented), so we stick to adsb.lol for the worker. Both return identical readsb/tar1090 JSON, so swapping sources is a one-line import change if either provider ever changes terms.
+- **OpenSky (dormant)**: client code at `apps/worker/src/opensky.ts` stays in the repo. Railway's IP can't reach it (TCP handshake times out). A non-Railway deploy (Fly.io, local, VPS) can re-enable it by re-importing `fetchStatesAll` in `poller.ts`.
 
-Two tiers — "sparse baseline via tile rotation" + "dense viewport via /api/viewport" — together give FR24-style feel across NA airspace.
+Two tiers — "sparse baseline via adsb.lol tile rotation" + "dense viewport via airplanes.live" — together give FR24-style feel across NA airspace.
 
 ## Why dead-reckoning
 
@@ -111,14 +110,14 @@ Routes:
 
 ### apps/worker (Railway)
 
-Single long-running Node.js process. Every 1 second (configurable via `TILE_INTERVAL_MS`, floor 1000ms):
+Single long-running Node.js process. Every 3 seconds (configurable via `TILE_INTERVAL_MS`, floor 3000ms):
 1. Pick the next tile from `NA_TILES` (round-robin, 20 hubs in North America).
-2. GET `https://api.airplanes.live/v2/point/{lat}/{lon}/{radius}` (no auth).
+2. GET `https://api.adsb.lol/v2/point/{lat}/{lon}/{radius}` (no auth).
 3. Parse aircraft array into normalized `AircraftState` (converting ft→m, knots→m/s, ft/min→m/s).
 4. Upsert into `aircraft_states` by `icao24` PK.
 5. Every 5 min: prune rows with `last_contact < now − STALE_TTL_SECONDS` (default 900s).
 
-Full continent refresh every 20s (20 tiles × 1s). No auth, no token management.
+Full continent refresh every 60s (20 tiles × 3s). No auth, no token management.
 
 ### packages/shared
 

@@ -1,13 +1,13 @@
 import type { AircraftState } from "shared";
 
 /**
- * Thin client for airplanes.live point+radius endpoint.
- * No auth. Hard 1 req/sec global rate limit per server IP — the poller
- * enforces that with its tileIntervalMs floor.
- * Response schema matches readsb/tar1090 (same as adsb.lol + adsb.fi).
+ * Thin client for adsb.lol point+radius endpoint.
+ * No auth today. Soft dynamic rate limit (empirically generous at 1 req / 3s
+ * from Railway). Response schema matches readsb/tar1090 (same as airplanes.live
+ * and adsb.fi).
  */
 
-const BASE = "https://api.airplanes.live";
+const BASE = "https://api.adsb.lol";
 
 type ALAircraft = {
   hex?: string;
@@ -80,9 +80,7 @@ export async function fetchTile(
     },
   });
   if (!res.ok) {
-    throw new Error(
-      `airplanes.live tile ${lat},${lon} r${radius} HTTP ${res.status}`,
-    );
+    throw new Error(`adsb.lol tile ${lat},${lon} r${radius} HTTP ${res.status}`);
   }
   const body = (await res.json()) as ALResponse;
   const out: AircraftState[] = [];
