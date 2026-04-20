@@ -43,6 +43,26 @@ export async function diagnose(): Promise<void> {
   // HTTPS via undici fetch (this is what the real code path uses)
   await probeFetch("https://auth.opensky-network.org/", "auth endpoint root");
 
+  // --- Alternative flight data sources — check which ones Railway CAN reach ---
+  await probeFetch(
+    "https://api.airplanes.live/v2/point/51.47/-0.46/50",
+    "airplanes.live (point+radius)",
+  );
+  await probeFetch(
+    "https://api.adsb.lol/v2/point/51.47/-0.46/50",
+    "adsb.lol (point+radius)",
+  );
+  await probeFetch(
+    "https://api.adsb.fi/v2/lat/51.47/lon/-0.46/dist/50",
+    "adsb.fi (point+radius)",
+  );
+  // Sanity checks — confirm egress works in general:
+  await probeFetch("https://www.example.com/", "example.com (sanity)");
+  await probeFetch(
+    "https://kjzqpnshlojsjkxqkhmd.supabase.co/rest/v1/",
+    "supabase (sanity)",
+  );
+
   console.log("[diag] probe done");
 }
 
