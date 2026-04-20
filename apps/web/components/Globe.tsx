@@ -536,8 +536,13 @@ export default function Globe() {
               process.env.NODE_ENV !== "production" &&
               globeRef.current
             ) {
-              (window as unknown as { __globe?: GlobeMethods }).__globe =
-                globeRef.current;
+              (window as unknown as {
+                __globe?: GlobeMethods;
+                __select?: (icao24: string | null) => void;
+              }).__globe = globeRef.current;
+              (window as unknown as {
+                __select?: (icao24: string | null) => void;
+              }).__select = setSelected;
             }
           }}
           // Custom layer: one THREE.Mesh per aircraft. react-globe.gl handles
