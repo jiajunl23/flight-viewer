@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import type { GlobeMethods } from "react-globe.gl";
 import type { AircraftState } from "shared";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
@@ -30,6 +31,7 @@ export default function Globe() {
   const [snapshot, setSnapshot] = useState<Snapshot>(() => new Map());
   const [size, setSize] = useState({ width: 0, height: 0 });
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const globeRef = useRef<GlobeMethods | undefined>(undefined);
 
   // Track the container size for the globe canvas.
   useEffect(() => {
@@ -109,14 +111,22 @@ export default function Globe() {
       </div>
       {size.width > 0 && (
         <GlobeGL
+          ref={globeRef}
           width={size.width}
           height={size.height}
           backgroundColor="#000"
-          globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
+          globeImageUrl="//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
           bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
           showAtmosphere
           atmosphereColor="#5dade2"
           atmosphereAltitude={0.15}
+          onGlobeReady={() => {
+            // Initial camera on Europe/Africa — denser traffic than the default 0,0.
+            globeRef.current?.pointOfView(
+              { lat: 25, lng: 10, altitude: 2.2 },
+              0,
+            );
+          }}
           pointsData={points}
           pointLat={(d: object) => (d as AircraftState).latitude!}
           pointLng={(d: object) => (d as AircraftState).longitude!}
