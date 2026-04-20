@@ -483,8 +483,10 @@ export default function Globe() {
           atmosphereColor="#5dade2"
           atmosphereAltitude={0.15}
           onGlobeReady={() => {
+            // Default view: centered on continental US, altitude tuned so CONUS
+            // fills most of the viewport while Canada + Mexico remain visible.
             globeRef.current?.pointOfView(
-              { lat: 45, lng: 10, altitude: 1.2 },
+              { lat: 39, lng: -97, altitude: 1.1 },
               0,
             );
             // Expose to window for debugging / Playwright introspection only in dev.

@@ -9,8 +9,9 @@ import {
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Flight Viewer",
-  description: "Real-time worldwide flight tracker on a 3D globe",
+  title: "North America Flight Tracker",
+  description:
+    "Real-time flight tracker covering North American airspace on a 3D globe",
 };
 
 export default function RootLayout({
@@ -23,7 +24,9 @@ export default function RootLayout({
           <header className="flex items-center justify-between px-6 py-3 border-b border-zinc-800 bg-black/70 backdrop-blur">
             <div className="flex items-center gap-2">
               <span aria-hidden className="text-lg">✈</span>
-              <span className="font-semibold tracking-tight">Flight Viewer</span>
+              <span className="font-semibold tracking-tight">
+                North America Flight Tracker
+              </span>
             </div>
             <div className="flex items-center gap-3">
               <Show when="signed-out">

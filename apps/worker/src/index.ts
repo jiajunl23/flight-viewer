@@ -1,49 +1,55 @@
 import { Agent, setGlobalDispatcher } from "undici";
-import { workerEnvSchema } from "shared";
-import { diagnose } from "./diagnose.js";
+import { z } from "zod";
 import { Poller } from "./poller.js";
 import { supabaseService } from "./supabase.js";
 
-// Bump undici's default 10s connect timeout to 30s — OpenSky's auth endpoint
-// is in Europe, and Railway cold connections can exceed 10s, which shows up
-// as UND_ERR_CONNECT_TIMEOUT in the poller error log.
+// Generous timeouts — adsb.lol is fast but Railway network cold-starts can be
+// slower than Node's 10s default.
 setGlobalDispatcher(
   new Agent({
-    connect: { timeout: 30_000 },
-    headersTimeout: 30_000,
-    bodyTimeout: 60_000,
+    connect: { timeout: 20_000 },
+    headersTimeout: 20_000,
+    bodyTimeout: 30_000,
   }),
 );
 
-const env = workerEnvSchema.parse(process.env);
+const envSchema = z.object({
+  NEXT_PUBLIC_SUPABASE_URL: z.url(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  TILE_INTERVAL_MS: z
+    .string()
+    .default("1000")
+    .transform((v) => Number.parseInt(v, 10)),
+  STALE_TTL_SECONDS: z
+    .string()
+    .default("900")
+    .transform((v) => Number.parseInt(v, 10)),
+});
+const env = envSchema.parse(process.env);
 
 const supabase = supabaseService(
   env.NEXT_PUBLIC_SUPABASE_URL,
   env.SUPABASE_SERVICE_ROLE_KEY,
 );
 
+// Clamp tile interval to >= 1000ms to respect adsb.lol's soft 1 req/sec cap.
+const tileInterval = Math.max(1_000, env.TILE_INTERVAL_MS);
+
 const poller = new Poller({
-  clientId: env.OPENSKY_CLIENT_ID,
-  clientSecret: env.OPENSKY_CLIENT_SECRET,
-  pollIntervalMs: env.POLL_INTERVAL_MS,
+  tileIntervalMs: tileInterval,
   staleTtlSeconds: env.STALE_TTL_SECONDS,
   supabase,
 });
 
 console.log(
-  `[worker] starting — poll=${env.POLL_INTERVAL_MS}ms stale_ttl=${env.STALE_TTL_SECONDS}s`,
+  `[worker] starting — data=adsb.lol tile_interval=${tileInterval}ms stale_ttl=${env.STALE_TTL_SECONDS}s`,
 );
 if (process.env.NODE_ENV !== "production") {
   console.warn(
-    "[worker] LOCAL DEV — if the Railway worker is also live, you are DOUBLE-POLLING OpenSky and burning credits twice.",
+    "[worker] LOCAL DEV — if a Railway worker is also live, you are DOUBLE-POLLING adsb.lol from the same origin. The cap is per-IP, so you'll trip rate limits faster.",
   );
 }
-
-// Run connectivity probe once at startup so prod logs tell us which layer
-// (DNS / TCP / TLS / HTTPS) is blocking the poll. Safe to keep in — runs
-// once, ~few seconds, and adds zero OpenSky credit cost (hits auth root
-// which doesn't count against the states/all quota).
-void diagnose().finally(() => poller.start());
+poller.start();
 
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`[worker] ${signal} — shutting down`);

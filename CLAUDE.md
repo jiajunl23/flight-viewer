@@ -1,6 +1,8 @@
 # Flight Viewer — Architecture
 
-Real-time worldwide flight tracker rendered on a 3D globe. Aircraft appear to sit on top of Earth; positions glide smoothly via client-side dead-reckoning between server updates.
+Real-time **North America** flight tracker rendered on a 3D globe. Aircraft appear to sit on top of Earth; positions glide smoothly via client-side dead-reckoning between server updates.
+
+The scope was pivoted from worldwide → North America during deployment because Railway's egress CIDR is blocked by OpenSky's firewall (TLS handshakes time out). adsb.lol — the free community ADS-B aggregator — is reachable and became the primary data source. OpenSky client code still lives in `apps/worker/src/opensky.ts` for anyone running the worker on a non-blocked host.
 
 ## High-level flow
 
@@ -43,12 +45,13 @@ Real-time worldwide flight tracker rendered on a 3D globe. Aircraft appear to si
                    └──────────────┘
 ```
 
-## Why two data sources
+## Data sources
 
-- **OpenSky /states/all** is the only free API with a worldwide snapshot endpoint. 4,000 credits/day = one worldwide call every ~90s. Great for the "globe full of planes" baseline.
-- **airplanes.live** is free with a 1 req/sec rate limit but only supports point+radius queries. Perfect for the user's focused viewport at up to 1 Hz.
+- **adsb.lol (primary, worker)**: free, no auth, soft dynamic rate limit (~1 req/sec). Point+radius endpoint only — no worldwide snapshot. The worker rotates through 20 predefined North American hub tiles (see `apps/worker/src/tiles.ts`) at 1 tile/sec, so the full continent refreshes every ~20s. Each tile is 250 nm radius.
+- **airplanes.live (frontend-only, viewport)**: free, 1 req/sec, also point+radius. Called directly from the Next.js `/api/viewport` route when the user picks a hub in the Region Picker, for 1 Hz refresh at zoomed-in scale.
+- **OpenSky (dormant)**: client code at `apps/worker/src/opensky.ts` stays in the repo for future use. Railway's IP can't reach it, so it's currently unused. Credentials are still in `.env.example`. A non-Railway deploy (Fly.io, local, VPS) can re-enable it by wiring `fetchStatesAll` into `poller.ts` in place of `fetchTile`.
 
-The hybrid mimics FlightRadar24's "sparse global baseline + dense local refresh" UX.
+Two tiers — "sparse baseline via adsb.lol tiles" + "dense viewport via airplanes.live" — together give the FR24-style feel across NA airspace.
 
 ## Why dead-reckoning
 
@@ -106,12 +109,14 @@ Routes:
 
 ### apps/worker (Railway)
 
-Single long-running Node.js process. Every 90s:
-1. Get/refresh OpenSky OAuth2 token (cached in memory, 30-min TTL).
-2. GET `/states/all` worldwide (4 credits).
-3. Parse state vectors into typed rows.
-4. Upsert into `aircraft_states` by `icao24` PK, only if incoming `last_contact >= stored.last_contact`.
-5. Every 5 min: prune rows with `last_contact < now − 900s`.
+Single long-running Node.js process. Every 1 second (configurable via `TILE_INTERVAL_MS`, floor 1000ms):
+1. Pick the next tile from `NA_TILES` (round-robin, 20 hubs in North America).
+2. GET `https://api.adsb.lol/v2/point/{lat}/{lon}/{radius}` (no auth).
+3. Parse aircraft array into normalized `AircraftState` (converting ft→m, knots→m/s, ft/min→m/s).
+4. Upsert into `aircraft_states` by `icao24` PK.
+5. Every 5 min: prune rows with `last_contact < now − STALE_TTL_SECONDS` (default 900s).
+
+Full continent refresh every 20s (20 tiles × 1s). No auth token management; adsb.lol is keyless today (see `.env.example` for the note about possible future API key requirement via feeder participation).
 
 ### packages/shared
 

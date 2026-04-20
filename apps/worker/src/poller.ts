@@ -1,36 +1,35 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  creditsUsedToday,
-  DAILY_CREDIT_BUDGET,
-  fetchStatesAll,
-  MIN_INTERVAL_MS,
-  wouldExceedBudget,
-} from "./opensky.js";
+import { fetchTile } from "./adsblol.js";
 import { pruneStale, upsertAircraftStates } from "./supabase.js";
+import { NA_TILES } from "./tiles.js";
 
 export interface PollerConfig {
-  clientId: string;
-  clientSecret: string;
-  pollIntervalMs: number;
+  tileIntervalMs: number;
   staleTtlSeconds: number;
   supabase: SupabaseClient;
 }
 
 const MAX_BACKOFF_MS = 60_000;
 
+/**
+ * Rotates through NA_TILES at one tile per tileIntervalMs. Each tick hits one
+ * adsb.lol point+radius endpoint and upserts the returned aircraft. A full
+ * continental refresh happens every `NA_TILES.length * tileIntervalMs`
+ * (default 20s at 1 req/s).
+ */
 export class Poller {
   private stopped = false;
   private currentTimer: NodeJS.Timeout | null = null;
   private pruneTimer: NodeJS.Timeout | null = null;
   private errorBackoffMs = 2_000;
+  private tileIndex = 0;
   private readonly intervalMs: number;
 
   constructor(private readonly cfg: PollerConfig) {
-    // Hard floor: env can only slow us down, never speed us up.
-    this.intervalMs = Math.max(MIN_INTERVAL_MS, cfg.pollIntervalMs);
-    if (this.intervalMs !== cfg.pollIntervalMs) {
+    this.intervalMs = Math.max(1_000, cfg.tileIntervalMs);
+    if (this.intervalMs !== cfg.tileIntervalMs) {
       console.warn(
-        `[poller] POLL_INTERVAL_MS=${cfg.pollIntervalMs} below ${MIN_INTERVAL_MS}ms floor; using ${this.intervalMs}ms`,
+        `[poller] tile interval ${cfg.tileIntervalMs}ms below 1000ms floor; using ${this.intervalMs}ms`,
       );
     }
   }
@@ -49,42 +48,38 @@ export class Poller {
   private async tick(): Promise<void> {
     if (this.stopped) return;
 
-    if (wouldExceedBudget()) {
-      console.warn(
-        `[poller] daily credit budget reached (${creditsUsedToday()}/${DAILY_CREDIT_BUDGET}); skipping tick`,
-      );
+    const tile = NA_TILES[this.tileIndex % NA_TILES.length];
+    if (!tile) {
+      // Tiles array should never be empty, but satisfy TS and fail loudly.
+      console.error("[poller] no tiles configured");
       this.scheduleNext(this.intervalMs);
       return;
     }
 
     const start = Date.now();
     try {
-      const { time, states } = await fetchStatesAll(
-        this.cfg.clientId,
-        this.cfg.clientSecret,
-      );
+      const states = await fetchTile(tile.lat, tile.lon, tile.radius);
       const written = await upsertAircraftStates(this.cfg.supabase, states);
       const elapsed = Date.now() - start;
       console.log(
-        `[poller] t=${time} fetched=${states.length} upserted=${written} elapsed=${elapsed}ms`,
-      );
-      console.log(
-        `[opensky] credits today: ${creditsUsedToday()}/${DAILY_CREDIT_BUDGET} (budget 4000)`,
+        `[poller] tile=${tile.name} fetched=${states.length} upserted=${written} elapsed=${elapsed}ms`,
       );
       this.errorBackoffMs = 2_000;
+      this.tileIndex += 1;
       this.scheduleNext(this.intervalMs);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // Node's undici wraps the real failure in err.cause — surface it so
-      // "fetch failed" isn't the only thing we see.
       const cause =
         err instanceof Error && "cause" in err && err.cause
-          ? ` (cause: ${(err.cause as { code?: string; message?: string; errno?: number }).code ?? ""} ${(err.cause as { message?: string }).message ?? String(err.cause)})`
+          ? ` (cause: ${(err.cause as { code?: string }).code ?? ""} ${(err.cause as { message?: string }).message ?? String(err.cause)})`
           : "";
+      // Never reschedule faster than the rate-limit floor, even on error.
       const delay = Math.max(this.intervalMs, this.errorBackoffMs);
       console.error(
-        `[poller] error: ${message}${cause} — next in ${delay}ms (backoff=${this.errorBackoffMs}ms, floor=${this.intervalMs}ms)`,
+        `[poller] error tile=${tile.name}: ${message}${cause} — next in ${delay}ms`,
       );
+      // Advance past the failing tile so one bad region doesn't stall the cycle.
+      this.tileIndex += 1;
       this.scheduleNext(delay);
       this.errorBackoffMs = Math.min(this.errorBackoffMs * 3, MAX_BACKOFF_MS);
     }

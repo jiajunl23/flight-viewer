@@ -11,12 +11,15 @@ export interface Region {
 }
 
 const PRESETS: Region[] = [
-  { name: "London", lat: 51.47, lon: -0.46, radius: 80 },
   { name: "New York", lat: 40.64, lon: -73.78, radius: 80 },
-  { name: "Paris", lat: 49.01, lon: 2.55, radius: 80 },
-  { name: "Tokyo", lat: 35.55, lon: 139.78, radius: 80 },
   { name: "Los Angeles", lat: 33.94, lon: -118.41, radius: 80 },
-  { name: "Frankfurt", lat: 50.04, lon: 8.56, radius: 80 },
+  { name: "Chicago", lat: 41.98, lon: -87.91, radius: 80 },
+  { name: "Dallas–Fort Worth", lat: 32.9, lon: -97.04, radius: 80 },
+  { name: "San Francisco", lat: 37.62, lon: -122.38, radius: 80 },
+  { name: "Atlanta", lat: 33.64, lon: -84.43, radius: 80 },
+  { name: "Seattle", lat: 47.45, lon: -122.31, radius: 80 },
+  { name: "Miami", lat: 25.8, lon: -80.29, radius: 80 },
+  { name: "Toronto", lat: 43.68, lon: -79.63, radius: 80 },
 ];
 
 export interface RegionPickerProps {
@@ -37,9 +40,9 @@ export default function RegionPicker({ onChange }: RegionPickerProps) {
   };
 
   return (
-    <div className="absolute top-3 right-3 z-10 bg-black/60 backdrop-blur px-3 py-2 rounded text-xs max-w-[260px]">
+    <div className="absolute top-3 right-3 z-10 bg-black/60 backdrop-blur px-3 py-2 rounded text-xs max-w-[300px]">
       <div className="text-zinc-400 mb-1.5">
-        Focus region (live 1 Hz via airplanes.live)
+        Zoom to hub (live 1 Hz via airplanes.live)
       </div>
       <div className="flex flex-wrap gap-1">
         {PRESETS.map((p) => (
