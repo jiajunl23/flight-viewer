@@ -36,25 +36,54 @@ const GlobeGL = dynamic(() => import("react-globe.gl"), {
 type Snapshot = Map<string, AircraftState>;
 
 /**
- * Shared geometry/material across every plane — three.js instancing via
- * custom objects isn't available through react-globe.gl's customLayer, but
- * reusing geometry across a few thousand meshes is still cheap.
+ * Flat 2D plane silhouette lying tangent to the globe surface, nose pointing
+ * in direction of travel. Mirrors FlightRadar24's look — icons feel pinned
+ * to the Earth rather than floating above it as 3D cones did.
+ *
+ * Globe radius in three-globe is 100 units by default, so ~1.4 units is small
+ * enough to be unobtrusive at global zoom and recognizable at region zoom.
  */
-// Globe radius in three-globe is 100 units by default, so the cone must
-// be ~1 unit tall to be visible at typical zoom.
-const PLANE_GEOMETRY = new THREE.ConeGeometry(0.4, 1.6, 6);
-// Cone defaults to +Y tip; rotate so the tip points along +X (direction of travel)
-// before we re-orient tangent to the globe surface in the update callback.
-PLANE_GEOMETRY.rotateZ(-Math.PI / 2);
+const PLANE_SIZE = 1.4;
+const PLANE_GEOMETRY = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
+
+// TextureLoader uses `Image`, which only exists in the browser. `next/dynamic`
+// with ssr:false only defers the COMPONENT render; the module still evaluates
+// during SSR. Lazily initialize in the browser on first mesh creation.
+let _planeTexture: THREE.Texture | null = null;
+function getPlaneTexture(): THREE.Texture {
+  if (_planeTexture) return _planeTexture;
+  const t = new THREE.TextureLoader().load("/plane.svg");
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  _planeTexture = t;
+  return t;
+}
 
 type PlaneMesh = THREE.Mesh & {
   __lastColor?: number;
   __icao24?: string;
 };
 
-function makePlaneMesh(icao24: string, initialColor = 0xf87171): PlaneMesh {
-  const material = new THREE.MeshBasicMaterial({ color: initialColor });
+// Reused scratch vectors so the per-frame update doesn't allocate.
+const _pos = new THREE.Vector3();
+const _n = new THREE.Vector3();
+const _e = new THREE.Vector3();
+const _north = new THREE.Vector3();
+const _east = new THREE.Vector3();
+const _up = new THREE.Vector3();
+const _basis = new THREE.Matrix4();
+
+function makePlaneMesh(icao24: string, initialColor = 0xff6b6b): PlaneMesh {
+  const material = new THREE.MeshBasicMaterial({
+    map: getPlaneTexture(),
+    color: initialColor,
+    transparent: true,
+    alphaTest: 0.1,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
   const mesh = new THREE.Mesh(PLANE_GEOMETRY, material) as PlaneMesh;
+  mesh.renderOrder = 1; // draw planes after globe
   mesh.__lastColor = initialColor;
   mesh.__icao24 = icao24;
   return mesh;
@@ -67,25 +96,33 @@ function updatePlaneMesh(
   nowMs: number,
 ): void {
   const r = reckon(state, nowMs);
-  if (!r || r.stale) {
+  if (!r || r.stale || !globe) {
     mesh.visible = false;
     return;
   }
   mesh.visible = true;
 
-  const coords = globe?.getCoords(
-    r.lat,
-    r.lng,
-    Math.min(r.alt / 800_000, 0.03),
-  );
-  if (coords) mesh.position.set(coords.x, coords.y, coords.z);
+  const altFrac = Math.min(r.alt / 800_000, 0.03);
+  const coords = globe.getCoords(r.lat, r.lng, altFrac);
+  _pos.set(coords.x, coords.y, coords.z);
+  mesh.position.copy(_pos);
 
-  const up = mesh.position.clone().normalize();
-  mesh.up.copy(up);
-  mesh.lookAt(0, 0, 0);
-  mesh.rotateX(Math.PI / 2);
-  const heading = (state.true_track ?? 0) * (Math.PI / 180);
-  mesh.rotateZ(-heading);
+  // Build a tangent basis from two nearby surface points so we can lay the
+  // plane mesh flat against the globe, +Y pointing to compass north.
+  const nC = globe.getCoords(r.lat + 0.05, r.lng, altFrac);
+  const eC = globe.getCoords(r.lat, r.lng + 0.05, altFrac);
+  _n.set(nC.x - coords.x, nC.y - coords.y, nC.z - coords.z);
+  _e.set(eC.x - coords.x, eC.y - coords.y, eC.z - coords.z);
+  _north.copy(_n).normalize();
+  _east.copy(_e).normalize();
+  _up.crossVectors(_east, _north).normalize();
+
+  _basis.makeBasis(_east, _north, _up);
+  mesh.setRotationFromMatrix(_basis);
+
+  // Compass heading 0=N,90=E (clockwise looking down) → rotate around +Z by -rad.
+  const headingRad = (state.true_track ?? 0) * (Math.PI / 180);
+  mesh.rotateZ(-headingRad);
 
   const colorHex = altitudeColorHex(r.alt, state.on_ground);
   if (mesh.__lastColor !== colorHex) {

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Top-down airliner silhouette, nose at top (Y=0). -->
+  <path fill="#ffffff" stroke="#000000" stroke-width="1.5" stroke-linejoin="round" d="
+    M32 2
+    L35 6
+    L36 28
+    L60 38
+    L60 44
+    L36 40
+    L36 50
+    L44 56
+    L44 60
+    L32 58
+    L20 60
+    L20 56
+    L28 50
+    L28 40
+    L4 44
+    L4 38
+    L28 28
+    L29 6
+    Z
+  "/>
+</svg>

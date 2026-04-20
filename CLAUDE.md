@@ -54,6 +54,44 @@ The hybrid mimics FlightRadar24's "sparse global baseline + dense local refresh"
 
 Server-side cadence is 5–90s depending on source. Client extrapolates each aircraft's lat/lon/alt every animation frame using velocity + true_track + vertical_rate + (now − last_contact). This lets the globe render at 60fps and makes even the 90s OpenSky cadence look live. Interpolation is capped at 120s to avoid "ghost planes."
 
+## Plane rendering (FR24-style 2D icons)
+
+Each aircraft is a flat `THREE.PlaneGeometry` (1.4×1.4 units on a radius-100 globe) textured with `apps/web/public/plane.svg` — a white airliner silhouette with a black outline, nose pointing up at rotation=0. The mesh is oriented **tangent to the globe surface**: a local basis is built at the aircraft's lat/lng (east, north, up) from two nearby `globe.getCoords` samples, then the mesh rotates by `-true_track` around its local Z (surface normal) so the nose points in the direction of travel. Color-tints the texture via `MeshBasicMaterial.color` for altitude bands.
+
+Why not 3D meshes or sprites:
+- **3D cones**: looked like blobs and didn't read as aircraft at globe scale (earlier iteration).
+- **Billboarded sprites**: always face the camera, ignoring the globe curvature — pins float above the surface rather than lying on it.
+- **Flat PlaneGeometry tangent to surface**: matches FlightRadar24's look — icons feel pinned to the Earth, rotation visibly tracks heading as you rotate the globe.
+
+## Running locally — what's actually live
+
+Three data layers, three different liveness requirements:
+
+| Layer | Source | Live locally without Railway? |
+|---|---|---|
+| World baseline | `aircraft_states` table (populated by `apps/worker`) | ❌ Only live when the worker is running (locally or on Railway) |
+| Viewport (region-focused) | `/api/viewport` → airplanes.live directly | ✅ Works with just `pnpm dev:web` — no worker needed |
+| Dead-reckoning interpolation | Client-side rAF | ✅ Always on, smooths both layers |
+
+**If you only run `pnpm dev:web`**, the globe starts empty (table rows are older than the 120s dead-reckoning horizon so they're filtered out). Click any region preset → 1 Hz airplanes.live data over that airspace renders immediately. **Open-ended viewport use needs nothing else.**
+
+**To populate the world baseline without deploying**, run the worker briefly:
+```
+pnpm --filter shared build && pnpm --filter worker build
+cd apps/worker && node dist/index.js
+# first tick fires immediately; Ctrl-C after 1–2 ticks. Each tick = 4 credits.
+```
+
+**To test frontend work without burning credits**, seed synthetic rows via Supabase MCP:
+```sql
+insert into aircraft_states (icao24, callsign, last_contact, latitude, longitude,
+  baro_altitude, on_ground, velocity, true_track, vertical_rate)
+values ('TEST0001', 'SYN001', extract(epoch from now())::bigint,
+        51.47, -0.46, 10000, false, 250, 90, 0);
+-- ... etc
+```
+Rows go stale after 120s — refresh `last_contact` or reseed as needed. `delete from aircraft_states where icao24 like 'TEST%';` to clean up.
+
 ## Packages
 
 ### apps/web (Vercel)
