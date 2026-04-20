@@ -23,9 +23,13 @@ FROM base AS runtime
 ENV NODE_ENV=production
 WORKDIR /repo
 
-# Copy only what's needed to run.
+# Copy only what's needed to run. pnpm workspaces rely on node_modules
+# symlinks in every workspace package (shared + worker) to resolve deps
+# like zod via `.pnpm/` store, so we MUST copy packages/shared/node_modules
+# and apps/worker/node_modules, not just the hoisted root.
 COPY --from=build /repo/node_modules ./node_modules
 COPY --from=build /repo/apps/worker/node_modules ./apps/worker/node_modules
+COPY --from=build /repo/packages/shared/node_modules ./packages/shared/node_modules
 COPY --from=build /repo/packages/shared/package.json ./packages/shared/package.json
 COPY --from=build /repo/packages/shared/dist ./packages/shared/dist
 COPY --from=build /repo/apps/worker/package.json ./apps/worker/package.json
