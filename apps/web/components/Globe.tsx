@@ -12,6 +12,17 @@ import {
   reckon,
 } from "./DeadReckoning";
 import RegionPicker, { type Region } from "./RegionPicker";
+import FiltersPanel, {
+  EMPTY_FILTERS,
+  type Filters,
+} from "./FiltersPanel";
+import ThemeSwitcher, {
+  THEME_TEXTURES,
+  type Theme,
+} from "./ThemeSwitcher";
+import FavoritesStar from "./FavoritesStar";
+import { aircraftMatches } from "@/lib/prefs";
+import { useAuth, useUser } from "@clerk/nextjs";
 
 const GlobeGL = dynamic(() => import("react-globe.gl"), {
   ssr: false,
@@ -89,8 +100,14 @@ export default function Globe() {
   const [visibleCount, setVisibleCount] = useState(0);
   const [region, setRegion] = useState<Region | null>(null);
   const [viewportCount, setViewportCount] = useState<number | null>(null);
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
+  const [theme, setTheme] = useState<Theme>("blue-marble");
+  const [selected, setSelected] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
+  const { isSignedIn } = useUser();
+  const { getToken: _getToken } = useAuth();
 
   // Keep the latest snapshot reachable from the per-frame update callback.
   const snapshotRef = useRef(snapshot);
@@ -166,12 +183,88 @@ export default function Globe() {
 
   // Filter out stale rows once per data tick (not per-frame). Dead-reckoning
   // still extrapolates each visible row every frame via customThreeObjectUpdate.
+  // Also apply user filters here — keeps client-side rendering predictable.
   const liveData = useMemo(() => {
     const now = Date.now() / 1000;
     return Array.from(snapshot.values()).filter(
-      (s) => s.last_contact && now - s.last_contact <= MAX_HORIZON_S,
+      (s) =>
+        s.last_contact &&
+        now - s.last_contact <= MAX_HORIZON_S &&
+        aircraftMatches(s, filters),
     );
-  }, [snapshot]);
+  }, [snapshot, filters]);
+
+  // Load preferences on sign-in; save when they change (debounced).
+  useEffect(() => {
+    if (!isSignedIn) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/preferences", { cache: "no-store" });
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          preferences: {
+            favorites: string[];
+            filter_countries: string[];
+            filter_airlines: string[];
+            altitude_min: number | null;
+            altitude_max: number | null;
+            show_on_ground: boolean;
+            theme: Theme;
+          } | null;
+        };
+        if (cancelled || !body.preferences) return;
+        const p = body.preferences;
+        setFavorites(new Set(p.favorites));
+        setFilters({
+          countries: p.filter_countries,
+          airlines: p.filter_airlines,
+          altitudeMin: p.altitude_min,
+          altitudeMax: p.altitude_max,
+          showOnGround: p.show_on_ground,
+        });
+        setTheme(p.theme);
+      } catch (err) {
+        console.warn("[prefs] load", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isSignedIn]);
+
+  // Persist on change (simple debounce so keystrokes don't flood).
+  useEffect(() => {
+    if (!isSignedIn) return;
+    const t = setTimeout(() => {
+      void fetch("/api/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          favorites: Array.from(favorites),
+          filter_countries: filters.countries,
+          filter_airlines: filters.airlines,
+          altitude_min: filters.altitudeMin,
+          altitude_max: filters.altitudeMax,
+          show_on_ground: filters.showOnGround,
+          theme,
+        }),
+      }).catch((err) => console.warn("[prefs] save", err));
+    }, 500);
+    return () => clearTimeout(t);
+  }, [isSignedIn, favorites, filters, theme]);
+
+  const toggleFavorite = (icao24: string): void => {
+    setFavorites((prev) => {
+      const next = new Set(prev);
+      if (next.has(icao24)) next.delete(icao24);
+      else next.add(icao24);
+      return next;
+    });
+  };
+
+  const selectedState =
+    selected !== null ? snapshot.get(selected) ?? null : null;
 
   useEffect(() => {
     setVisibleCount(liveData.length);
@@ -278,13 +371,76 @@ export default function Globe() {
         )}
       </div>
       <RegionPicker onChange={setRegion} />
+      <div className="absolute top-[84px] right-3 z-10">
+        <ThemeSwitcher value={theme} onChange={setTheme} />
+      </div>
+      <FiltersPanel value={filters} onChange={setFilters} />
+      {selectedState && (
+        <div className="absolute bottom-3 right-3 z-10 bg-black/70 backdrop-blur rounded px-3 py-2 text-xs text-zinc-200 max-w-[280px] space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-sm">
+              {selectedState.callsign ?? selectedState.icao24}
+            </span>
+            <div className="flex items-center gap-1">
+              {isSignedIn && (
+                <FavoritesStar
+                  favored={favorites.has(selectedState.icao24)}
+                  onToggle={() => toggleFavorite(selectedState.icao24)}
+                />
+              )}
+              <button
+                onClick={() => setSelected(null)}
+                aria-label="Close"
+                className="text-zinc-500 hover:text-zinc-200"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <div className="text-zinc-400">
+            {selectedState.origin_country ?? "—"}
+          </div>
+          <div>
+            Alt:{" "}
+            {(selectedState.baro_altitude ?? selectedState.geo_altitude ?? 0).toFixed(0)}m
+            {selectedState.on_ground && " (ground)"}
+          </div>
+          <div>
+            Spd: {(selectedState.velocity ?? 0).toFixed(0)} m/s · Hdg:{" "}
+            {(selectedState.true_track ?? 0).toFixed(0)}°
+          </div>
+        </div>
+      )}
+      {favorites.size > 0 && isSignedIn && (
+        <div className="absolute bottom-3 left-[280px] z-10 bg-black/60 backdrop-blur rounded text-xs text-zinc-300 px-3 py-2 max-w-[240px]">
+          <div className="text-zinc-400 mb-1">
+            Favorites ({favorites.size})
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {Array.from(favorites)
+              .slice(0, 12)
+              .map((id) => {
+                const s = snapshot.get(id);
+                return (
+                  <button
+                    key={id}
+                    onClick={() => setSelected(id)}
+                    className="px-1.5 py-0.5 rounded bg-yellow-900/50 text-yellow-200 hover:bg-yellow-800/60"
+                  >
+                    {s?.callsign ?? id}
+                  </button>
+                );
+              })}
+          </div>
+        </div>
+      )}
       {size.width > 0 && (
         <GlobeGL
           ref={globeRef}
           width={size.width}
           height={size.height}
           backgroundColor="#000"
-          globeImageUrl="//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
+          globeImageUrl={THEME_TEXTURES[theme]}
           bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
           showAtmosphere
           atmosphereColor="#5dade2"
@@ -310,6 +466,10 @@ export default function Globe() {
           customThreeObject={(d: object) => {
             const state = d as AircraftState;
             return makePlaneMesh(state.icao24);
+          }}
+          onCustomLayerClick={(d: object) => {
+            const state = d as AircraftState;
+            setSelected(state.icao24);
           }}
           customThreeObjectUpdate={(obj: object, d: object) => {
             // Fires once when the data row changes (e.g. new server tick).
