@@ -158,12 +158,21 @@ function updatePlaneMesh(
   //   hovered:   1.35× as a preview ("click here would select")
   //   neither:   1× (category scale only)
   const boost = isSelected ? 1.8 : isHovered ? 1.35 : 1;
-  // LOD compensation: when we're showing ≤50% of planes (zoomed out) scale
-  // the survivors up so they're still recognizable. Ramps smoothly from 1×
-  // at lodKeep=0.5 to 3× at lodKeep=0 so the transition across the pivot
-  // is a gradual growth rather than a visual pop.
-  const lodBoost =
-    lodKeep >= 0.5 ? 1 : 1 + 2 * (0.5 - lodKeep) / 0.5;
+  // LOD compensation: as LOD filters more planes out, scale the survivors
+  // up so they stay recognizable at lower densities.
+  //   >50%  → 1.0×
+  //   =50%  → 1.5× (jump)
+  //   40%   → 2.0×
+  //   20%   → 3.0×
+  //   <20%  → 3.0× (cap)
+  // Linear interpolation inside each band.
+  let lodBoost: number;
+  if (lodKeep > 0.5) lodBoost = 1;
+  else if (lodKeep >= 0.4)
+    lodBoost = 1.5 + ((0.5 - lodKeep) / 0.1) * 0.5; // 1.5→2.0
+  else if (lodKeep >= 0.2)
+    lodBoost = 2 + ((0.4 - lodKeep) / 0.2) * 1; // 2.0→3.0
+  else lodBoost = 3;
   const scale = categoryScale(state.category) * boost * lodBoost;
   mesh.scale.setScalar(scale);
 
