@@ -9,7 +9,6 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 import {
   angularDistanceRad,
   categoryScale,
-  combinedKeepFraction,
   icao24Hash,
   isEmergency,
   lodKeepFraction,
@@ -336,16 +335,14 @@ export default function Globe() {
   //   2. User filters (country/airline/altitude/on-ground)
   //   3. Spatial cull — drop planes outside visibleRadius × 1.2 (behind the
   //      horizon); selected + favorited planes always kept.
-  //   4. Concentric-ring density — effective keep fraction =
-  //        lodKeep  (altitude-based base)
-  //        ×  ringKeepMultiplier(dist / viewRadius)  (distance-based falloff)
-  //      so planes near the camera's center render dense, planes near the
-  //      edge of the visible cap thin out. 100% only happens when the user
-  //      is zoomed deep AND the plane is within the center focus zone.
+  //   4. Altitude-based density — purely `icao24Hash(s) < lodKeep`.
+  //      Intentionally NOT position-dependent: a plane's rendered/not-
+  //      rendered state must not change as it moves, otherwise you can't
+  //      watch movement — planes would keep popping across the distance
+  //      bands. Zoom changes the subset; plane motion does not.
   const liveData = useMemo(() => {
     const now = Date.now() / 1000;
     const radiusLimit = Math.min(Math.PI, viewRadius * 1.2);
-    const safeRadius = Math.max(0.01, viewRadius);
     return Array.from(snapshot.values()).filter((s) => {
       if (!s.last_contact) return false;
       if (now - s.last_contact > MAX_HORIZON_S) return false;
@@ -364,12 +361,8 @@ export default function Globe() {
       );
       if (d > radiusLimit) return false;
 
-      // Combined keep: at high base (zoomed in) the extra density only
-      // applies in the small focus zone; outside it falls back to 50% +
-      // ring falloff. Below 50% base it's the plain base × ring behavior.
-      const effectiveKeep = combinedKeepFraction(lodKeep, d / safeRadius);
-      if (effectiveKeep >= 1) return true;
-      return icao24Hash(s.icao24) < effectiveKeep;
+      if (lodKeep >= 1) return true;
+      return icao24Hash(s.icao24) < lodKeep;
     });
   }, [
     snapshot,
