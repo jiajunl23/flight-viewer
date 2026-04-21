@@ -100,16 +100,57 @@ export function icao24Hash(icao24: string): number {
 
 /**
  * Discrete LOD buckets keyed on camera altitude. Maps to a keep-fraction for
- * hash-based subsampling. A bucketed approach (rather than continuous) means
- * planes don't flicker in and out with tiny zoom changes; they only shift
- * populations when the user crosses a bucket boundary.
+ * hash-based subsampling of planes WITHIN the visible cap. Spatial culling
+ * (below) handles the "plane is on the far side of the globe" case — this
+ * just controls density within the viewed region.
+ *
+ * Buckets are denser around continental/global view because that's where
+ * count matters most. At hub/city zoom (altitude < 0.8) the visible cap is
+ * small enough that 100% density is cheap.
  */
 export function lodKeepFraction(altitude: number): number {
-  if (altitude <= 0.4) return 1.0; // zoomed into a city — render everything
-  if (altitude <= 0.8) return 0.5;
-  if (altitude <= 1.3) return 0.25;
-  if (altitude <= 2.0) return 0.12;
-  return 0.06; // zoomed all the way out
+  if (altitude <= 0.6) return 1.0; // hub / city — show everything nearby
+  if (altitude <= 0.9) return 0.85;
+  if (altitude <= 1.2) return 0.6;
+  if (altitude <= 1.5) return 0.4;
+  if (altitude <= 1.8) return 0.25;
+  if (altitude <= 2.2) return 0.15;
+  if (altitude <= 2.8) return 0.1;
+  return 0.06;
+}
+
+/**
+ * Angular radius (in radians) of the spherical cap visible from a camera at
+ * the given altitude above a unit-radius globe. Derived from simple tangent
+ * geometry: cos(α) = R / (R + h), R = 1. So α = acos(1 / (1 + altitude)).
+ *
+ * Planes outside this cap are literally behind the horizon and wouldn't be
+ * visible even without culling — dropping them saves per-frame work.
+ */
+export function visibleAngularRadiusRad(altitude: number): number {
+  const clamped = Math.max(0.001, altitude);
+  return Math.acos(Math.min(1, 1 / (1 + clamped)));
+}
+
+/**
+ * Great-circle angular distance in radians between two lat/lng points
+ * (haversine). Used for the spatial LOD filter.
+ */
+export function angularDistanceRad(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const toRad = Math.PI / 180;
+  const φ1 = lat1 * toRad;
+  const φ2 = lat2 * toRad;
+  const Δφ = (lat2 - lat1) * toRad;
+  const Δλ = (lng2 - lng1) * toRad;
+  const sΔφ = Math.sin(Δφ / 2);
+  const sΔλ = Math.sin(Δλ / 2);
+  const a = sΔφ * sΔφ + Math.cos(φ1) * Math.cos(φ2) * sΔλ * sΔλ;
+  return 2 * Math.asin(Math.min(1, Math.sqrt(Math.max(0, a))));
 }
 
 /**

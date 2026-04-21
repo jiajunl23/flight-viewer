@@ -7,6 +7,7 @@ import type { GlobeMethods } from "react-globe.gl";
 import type { AircraftState } from "shared";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import {
+  angularDistanceRad,
   categoryScale,
   icao24Hash,
   isEmergency,
@@ -14,6 +15,7 @@ import {
   MAX_HORIZON_S,
   reckon,
   speedColorHex,
+  visibleAngularRadiusRad,
 } from "./DeadReckoning";
 import RegionPicker, { type Region } from "./RegionPicker";
 import FiltersPanel, {
@@ -158,16 +160,40 @@ export default function Globe() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
   const [theme, setTheme] = useState<Theme>("blue-marble");
-  // Density LOD — reduces rendered plane count when zoomed out so the per-
-  // frame scene-walk stays cheap. Updates when the user crosses an altitude
-  // bucket boundary (polled at 400ms so tiny zoom wiggles don't flicker).
+  // Density LOD + spatial culling — reduces rendered plane count when zoomed
+  // out AND when planes are outside the visible cap. Updates in a 400ms
+  // interval so tiny zoom/pan wiggles don't flicker the mesh set.
   const [lodKeep, setLodKeep] = useState<number>(1.0);
+  const [viewCenter, setViewCenter] = useState<{ lat: number; lng: number }>({
+    lat: 39,
+    lng: -97,
+  });
+  // Angular radius of the visible spherical cap around viewCenter, in radians.
+  // Start at π so on first render nothing is culled.
+  const [viewRadius, setViewRadius] = useState<number>(Math.PI);
   useEffect(() => {
     const interval = setInterval(() => {
       const pov = globeRef.current?.pointOfView();
       if (!pov) return;
-      const target = lodKeepFraction(pov.altitude);
-      setLodKeep((prev) => (prev !== target ? target : prev));
+      const targetKeep = lodKeepFraction(pov.altitude);
+      const targetRadius = visibleAngularRadiusRad(pov.altitude);
+      setLodKeep((prev) =>
+        Math.abs(prev - targetKeep) > 0.001 ? targetKeep : prev,
+      );
+      setViewRadius((prev) =>
+        Math.abs(prev - targetRadius) > 0.02 ? targetRadius : prev,
+      );
+      setViewCenter((prev) => {
+        // Pan threshold: re-snap only when POV has meaningfully moved so the
+        // liveData recompute doesn't run on every 400ms tick.
+        if (
+          Math.abs(prev.lat - pov.lat) > 1 ||
+          Math.abs(prev.lng - pov.lng) > 1
+        ) {
+          return { lat: pov.lat, lng: pov.lng };
+        }
+        return prev;
+      });
     }, 400);
     return () => clearInterval(interval);
   }, []);
@@ -282,24 +308,48 @@ export default function Globe() {
 
   // Filter out stale rows once per data tick (not per-frame). Dead-reckoning
   // still extrapolates each visible row every frame via customThreeObjectUpdate.
-  // Also apply user filters + density LOD here — keeps client-side rendering
-  // predictable. Selected + favorited aircraft bypass LOD so tracking a
-  // specific plane never drops it when zoomed out.
+  // Pipeline:
+  //   1. Stale filter (last_contact past 120s horizon)
+  //   2. User filters (country/airline/altitude/on-ground)
+  //   3. Spatial cull — drop planes outside the visible spherical cap
+  //      (+20% margin so panning doesn't pop planes in/out at the edge).
+  //      Selected + favorited planes bypass this so tracked aircraft never
+  //      disappear when you zoom or pan away from them.
+  //   4. Density LOD — hash-based uniform subsample within the visible cap.
   const liveData = useMemo(() => {
     const now = Date.now() / 1000;
+    const radiusLimit = Math.min(Math.PI, viewRadius * 1.2);
     return Array.from(snapshot.values()).filter((s) => {
       if (!s.last_contact) return false;
       if (now - s.last_contact > MAX_HORIZON_S) return false;
       if (!aircraftMatches(s, filters)) return false;
-      // Always keep user-relevant planes regardless of LOD.
-      if (s.icao24 === selected) return true;
-      if (favorites.has(s.icao24)) return true;
-      // Hash-based uniform subsample; stable so the same planes stay visible
-      // between frames.
+
+      const keptForUser =
+        s.icao24 === selected || favorites.has(s.icao24);
+
+      if (!keptForUser && s.latitude != null && s.longitude != null) {
+        const d = angularDistanceRad(
+          viewCenter.lat,
+          viewCenter.lng,
+          s.latitude,
+          s.longitude,
+        );
+        if (d > radiusLimit) return false;
+      }
+
+      if (keptForUser) return true;
       if (lodKeep >= 1) return true;
       return icao24Hash(s.icao24) < lodKeep;
     });
-  }, [snapshot, filters, lodKeep, selected, favorites]);
+  }, [
+    snapshot,
+    filters,
+    lodKeep,
+    viewCenter,
+    viewRadius,
+    selected,
+    favorites,
+  ]);
 
   // Load preferences on sign-in; save when they change (debounced).
   useEffect(() => {
