@@ -73,6 +73,13 @@ type PlaneMesh = THREE.Mesh & {
   __icao24?: string;
 };
 
+// Shared no-op for selected planes — replaces Mesh.raycast so the raycaster
+// skips hit-testing the currently-selected mesh. Unlike mesh.layers.disableAll(),
+// this does NOT block rendering (camera + raycaster both default to layer 0;
+// disabling the layer hides the mesh entirely — not what we want).
+const NO_RAYCAST = function () {} as unknown as THREE.Object3D["raycast"];
+const DEFAULT_MESH_RAYCAST = THREE.Mesh.prototype.raycast;
+
 // Reused scratch vectors so the per-frame update doesn't allocate.
 const _pos = new THREE.Vector3();
 const _n = new THREE.Vector3();
@@ -116,15 +123,12 @@ function updatePlaneMesh(
     return;
   }
   mesh.visible = true;
-  // Selected planes get their hit-test disabled so clicks pass through to
-  // neighboring planes (switching selection becomes one-click) OR fall to
-  // the globe surface to deselect. Clicking the selected plane itself is a
-  // no-op anyway — its info is already in the popover.
-  if (isSelected) {
-    mesh.layers.disableAll();
-  } else {
-    mesh.layers.enable(0);
-  }
+  mesh.layers.enable(0);
+  // Selected planes keep rendering but have raycast overridden to no-op, so
+  // clicks pass through to neighboring planes (switching selection is one-
+  // click) OR reach the globe surface to deselect. Everything else uses the
+  // default Mesh raycast so hit-testing works normally.
+  mesh.raycast = isSelected ? NO_RAYCAST : DEFAULT_MESH_RAYCAST;
 
   const altFrac = Math.min(r.alt / 800_000, 0.03);
   const coords = globe.getCoords(r.lat, r.lng, altFrac);
@@ -880,17 +884,15 @@ export default function Globe() {
           atmosphereColor="#5dade2"
           atmosphereAltitude={0.15}
           onGlobeReady={() => {
-            // Default view: centered on continental US, altitude tuned so CONUS
-            // fills most of the viewport while Canada + Mexico remain visible.
-            // Only run the pan once — Strict Mode or any later re-mount
-            // shouldn't yank the user back to the default view.
-            if (!didInitialPanRef.current) {
-              didInitialPanRef.current = true;
-              globeRef.current?.pointOfView(
-                { lat: 39, lng: -97, altitude: 1.1 },
-                0,
-              );
-            }
+            // Default view on every page load: centered on continental US,
+            // altitude tuned so CONUS fills most of the viewport while
+            // Canada + Mexico remain visible. Always runs — on a real page
+            // refresh we want to land on NA, not wherever the user last
+            // looked in some earlier session.
+            globeRef.current?.pointOfView(
+              { lat: 39, lng: -97, altitude: 1.1 },
+              0,
+            );
             // Expose to window for debugging / Playwright introspection only in dev.
             if (
               process.env.NODE_ENV !== "production" &&
