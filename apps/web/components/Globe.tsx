@@ -155,17 +155,8 @@ function updatePlaneMesh(
   // Scale by ADS-B emitter category — heavies render bigger, helicopters smaller.
   //   selected:  1.8× for strong visual focus
   //   hovered:   1.35× as a preview ("click here would select")
-  //   live:      1.3× with a subtle breathing pulse so live-tracked planes
-  //              are obviously distinct from the baseline Railway snapshot
   //   neither:   1× (category scale only)
-  let boost = 1;
-  if (isSelected) boost = 1.8;
-  else if (isHovered) boost = 1.35;
-  else if (isLive) {
-    // Breathe between 1.2× and 1.4× at ~1.4 Hz so live planes visibly pulse.
-    const pulse = 1.3 + 0.1 * Math.sin(nowMs / 110);
-    boost = pulse;
-  }
+  const boost = isSelected ? 1.8 : isHovered ? 1.35 : 1;
   const scale = categoryScale(state.category) * boost;
   mesh.scale.setScalar(scale);
 
@@ -757,10 +748,10 @@ export default function Globe() {
               {region.name}: {viewportCount} live (1 Hz)
             </span>
             <span
-              className="inline-block h-2 w-2 rounded-full bg-amber-400 animate-pulse"
+              className="inline-block h-2 w-2 rounded-sm bg-amber-400"
               aria-hidden
             />
-            <span className="text-[10px] text-amber-300/80">pulsing = live</span>
+            <span className="text-[10px] text-amber-300/80">gold = live</span>
           </div>
         )}
       </div>
