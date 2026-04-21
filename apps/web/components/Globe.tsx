@@ -568,6 +568,13 @@ export default function Globe() {
   // Hovered aircraft — stored as a ref so per-frame lookups don't need state.
   // We also sync a lightweight state just to flip the canvas cursor style.
   const hoveredRef = useRef<string | null>(null);
+  // Stickiest-hover: the last non-null hovered plane plus the ms timestamp
+  // when the cursor left it. If a click lands on the globe shortly after the
+  // cursor left a plane (pixel jitter between mouseup and the raycast), we
+  // still treat that as a click on that plane.
+  const lastHoveredRef = useRef<string | null>(null);
+  const lastHoverLeftAtRef = useRef<number>(0);
+  const HOVER_CLICK_GRACE_MS = 300;
   const [cursorIsPointer, setCursorIsPointer] = useState(false);
 
   // Idle auto-recenter — if the user rotates away and then stops interacting
@@ -924,18 +931,37 @@ export default function Globe() {
           }}
           onCustomLayerHover={(d: object | null) => {
             const newHover = d ? (d as AircraftState).icao24 : null;
+            // Record when the user left a plane, so a click within the
+            // grace window can still commit to that plane.
+            if (hoveredRef.current && !newHover) {
+              lastHoveredRef.current = hoveredRef.current;
+              lastHoverLeftAtRef.current = Date.now();
+            } else if (newHover) {
+              lastHoveredRef.current = newHover;
+              lastHoverLeftAtRef.current = 0;
+            }
             hoveredRef.current = newHover;
             setCursorIsPointer(newHover !== null);
           }}
-          // Clicking the globe: if the user is currently hovering a plane
-          // (white preview visible), commit THAT as the selection — the
-          // raycaster happened to miss the plane mesh by a pixel or two due
-          // to mouse jitter, but the hover state is the right truth. Only
-          // fall through to deselect if nothing is being hovered.
+          // Clicking the globe: if the user is hovering a plane OR just left
+          // one within the grace window, commit THAT as the selection. The
+          // raycaster sometimes misses the plane mesh by a pixel due to
+          // mouse jitter or a late hover-end event, but we already knew the
+          // user was aiming for that plane. Only fall through to deselect
+          // when there's no recent hover to promote.
           onGlobeClick={() => {
             if (hoveredRef.current) {
               selectedRef.current = hoveredRef.current;
               setSelected(hoveredRef.current);
+              return;
+            }
+            if (
+              lastHoveredRef.current &&
+              Date.now() - lastHoverLeftAtRef.current < HOVER_CLICK_GRACE_MS
+            ) {
+              selectedRef.current = lastHoveredRef.current;
+              setSelected(lastHoveredRef.current);
+              lastHoveredRef.current = null; // consume so next click deselects
               return;
             }
             selectedRef.current = null;
