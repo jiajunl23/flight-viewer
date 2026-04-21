@@ -18,17 +18,12 @@ import {
   visibleAngularRadiusRad,
 } from "./DeadReckoning";
 import RegionPicker, { type Region } from "./RegionPicker";
-import FiltersPanel, {
-  EMPTY_FILTERS,
-  type Filters,
-} from "./FiltersPanel";
 import ThemeSwitcher, {
   THEME_TEXTURES,
   type Theme,
 } from "./ThemeSwitcher";
 import FavoritesStar from "./FavoritesStar";
 import FavoritesPanel from "./FavoritesPanel";
-import { aircraftMatches } from "@/lib/prefs";
 import { useAuth, useUser } from "@clerk/nextjs";
 
 const GlobeGL = dynamic(() => import("react-globe.gl"), {
@@ -199,7 +194,6 @@ export default function Globe() {
   const [visibleCount, setVisibleCount] = useState(0);
   const [region, setRegion] = useState<Region | null>(null);
   const [viewportCount, setViewportCount] = useState<number | null>(null);
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
   const [theme, setTheme] = useState<Theme>("blue-marble");
   // Density LOD + spatial culling — reduces rendered plane count when zoomed
@@ -348,11 +342,10 @@ export default function Globe() {
   }, []);
 
   // Filter out stale rows once per data tick (not per-frame).
-  //   1. Stale filter (last_contact past 120s horizon)
-  //   2. User filters (country/airline/altitude/on-ground)
-  //   3. Spatial cull — drop planes outside visibleRadius × 1.2 (behind the
+  //   1. Stale filter (last_contact past horizon)
+  //   2. Spatial cull — drop planes outside visibleRadius × 1.2 (behind the
   //      horizon); selected + favorited planes always kept.
-  //   4. Altitude-based density — purely `icao24Hash(s) < lodKeep`.
+  //   3. Altitude-based density — purely `icao24Hash(s) < lodKeep`.
   //      Intentionally NOT position-dependent: a plane's rendered/not-
   //      rendered state must not change as it moves, otherwise you can't
   //      watch movement — planes would keep popping across the distance
@@ -363,7 +356,6 @@ export default function Globe() {
     return Array.from(snapshot.values()).filter((s) => {
       if (!s.last_contact) return false;
       if (now - s.last_contact > MAX_HORIZON_S) return false;
-      if (!aircraftMatches(s, filters)) return false;
 
       const keptForUser =
         s.icao24 === selected || favorites.has(s.icao24);
@@ -383,7 +375,6 @@ export default function Globe() {
     });
   }, [
     snapshot,
-    filters,
     lodKeep,
     viewCenter,
     viewRadius,
@@ -402,24 +393,12 @@ export default function Globe() {
         const body = (await res.json()) as {
           preferences: {
             favorites: string[];
-            filter_countries: string[];
-            filter_airlines: string[];
-            altitude_min: number | null;
-            altitude_max: number | null;
-            show_on_ground: boolean;
             theme: Theme;
           } | null;
         };
         if (cancelled || !body.preferences) return;
         const p = body.preferences;
         setFavorites(new Set(p.favorites));
-        setFilters({
-          countries: p.filter_countries,
-          airlines: p.filter_airlines,
-          altitudeMin: p.altitude_min,
-          altitudeMax: p.altitude_max,
-          showOnGround: p.show_on_ground,
-        });
         setTheme(p.theme);
       } catch (err) {
         console.warn("[prefs] load", err);
@@ -439,17 +418,17 @@ export default function Globe() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           favorites: Array.from(favorites),
-          filter_countries: filters.countries,
-          filter_airlines: filters.airlines,
-          altitude_min: filters.altitudeMin,
-          altitude_max: filters.altitudeMax,
-          show_on_ground: filters.showOnGround,
+          filter_countries: [],
+          filter_airlines: [],
+          altitude_min: null,
+          altitude_max: null,
+          show_on_ground: true,
           theme,
         }),
       }).catch((err) => console.warn("[prefs] save", err));
     }, 500);
     return () => clearTimeout(t);
-  }, [isSignedIn, favorites, filters, theme]);
+  }, [isSignedIn, favorites, theme]);
 
   const toggleFavorite = (icao24: string): void => {
     setFavorites((prev) => {
@@ -790,7 +769,6 @@ export default function Globe() {
           <ThemeSwitcher value={theme} onChange={setTheme} />
         </div>
       </div>
-      <FiltersPanel value={filters} onChange={setFilters} />
       {selectedState && (
         <div
           // Re-mount the popover each time the selected icao24 changes so the
