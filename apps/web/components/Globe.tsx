@@ -623,6 +623,10 @@ export default function Globe() {
             const state = d as AircraftState;
             setSelected(state.icao24);
           }}
+          // Clicking empty globe surface clears the selected plane so the
+          // popover dismisses. Clicks in the black background around the
+          // globe are handled by the container's onClick below.
+          onGlobeClick={() => setSelected(null)}
           customThreeObjectUpdate={(obj: object, d: object) => {
             // Fires once when the data row changes (e.g. new server tick).
             // Per-frame interpolation happens in the rAF loop below.
