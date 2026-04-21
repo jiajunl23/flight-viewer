@@ -23,7 +23,9 @@ import ThemeSwitcher, {
   type Theme,
 } from "./ThemeSwitcher";
 import FavoritesStar from "./FavoritesStar";
+import FavoritesPanel from "./FavoritesPanel";
 import { aircraftMatches } from "@/lib/prefs";
+import { useRoutes } from "@/lib/useRoutes";
 import { useAuth, useUser } from "@clerk/nextjs";
 
 const GlobeGL = dynamic(() => import("react-globe.gl"), {
@@ -160,6 +162,7 @@ export default function Globe() {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const { isSignedIn } = useUser();
   const { getToken: _getToken } = useAuth();
+  const { routes, fetchRoute } = useRoutes();
 
   // Keep the latest snapshot reachable from the per-frame update callback.
   const snapshotRef = useRef(snapshot);
@@ -335,9 +338,46 @@ export default function Globe() {
     setFavorites((prev) => {
       const next = new Set(prev);
       if (next.has(icao24)) next.delete(icao24);
-      else next.add(icao24);
+      else {
+        next.add(icao24);
+        // Fetch route for the newly-starred aircraft so the Tracking panel
+        // can display src → dst.
+        const state = snapshotRef.current.get(icao24);
+        if (state?.callsign)
+          fetchRoute(state.callsign, state.latitude, state.longitude);
+      }
       return next;
     });
+  };
+
+  // Whenever the selected aircraft changes, lazily look up its route so the
+  // popover can show src → dst. Cached per callsign.
+  useEffect(() => {
+    if (!selected) return;
+    const s = snapshot.get(selected);
+    if (s?.callsign) fetchRoute(s.callsign, s.latitude, s.longitude);
+  }, [selected, snapshot, fetchRoute]);
+
+  // On mount: fetch routes for any planes already in the favorites set (after
+  // preferences load). Prevents an empty panel on page reload.
+  useEffect(() => {
+    for (const id of favorites) {
+      const s = snapshot.get(id);
+      if (s?.callsign) fetchRoute(s.callsign, s.latitude, s.longitude);
+    }
+  }, [favorites, snapshot, fetchRoute]);
+
+  const selectFromPanel = (icao24: string): void => {
+    selectedRef.current = icao24;
+    setSelected(icao24);
+    // Pan the camera to the plane so it's visible.
+    const s = snapshot.get(icao24);
+    if (s?.latitude != null && s?.longitude != null) {
+      globeRef.current?.pointOfView(
+        { lat: s.latitude, lng: s.longitude, altitude: 0.8 },
+        900,
+      );
+    }
   };
 
   const selectedState =
@@ -543,6 +583,19 @@ export default function Globe() {
               )}
             </div>
           )}
+          {(() => {
+            const callsignKey = selectedState.callsign?.trim().toUpperCase();
+            const route = callsignKey ? routes.get(callsignKey) : undefined;
+            if (!route?.src?.iata || !route?.dst?.iata) return null;
+            return (
+              <div className="text-cyan-300 text-[11px] font-mono">
+                {route.src.iata} → {route.dst.iata}
+                <span className="block text-zinc-500 font-sans">
+                  {route.src.location} → {route.dst.location}
+                </span>
+              </div>
+            );
+          })()}
           {isEmergency(selectedState.emergency, selectedState.squawk) && (
             <div className="text-red-300 font-semibold">
               ⚠ EMERGENCY{" "}
@@ -568,28 +621,15 @@ export default function Globe() {
           )}
         </div>
       )}
-      {favorites.size > 0 && isSignedIn && (
-        <div className="absolute bottom-3 left-[280px] z-10 bg-black/60 backdrop-blur rounded text-xs text-zinc-300 px-3 py-2 max-w-[240px]">
-          <div className="text-zinc-400 mb-1">
-            Favorites ({favorites.size})
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {Array.from(favorites)
-              .slice(0, 12)
-              .map((id) => {
-                const s = snapshot.get(id);
-                return (
-                  <button
-                    key={id}
-                    onClick={() => setSelected(id)}
-                    className="px-1.5 py-0.5 rounded bg-yellow-900/50 text-yellow-200 hover:bg-yellow-800/60"
-                  >
-                    {s?.callsign ?? id}
-                  </button>
-                );
-              })}
-          </div>
-        </div>
+      {isSignedIn && (
+        <FavoritesPanel
+          favorites={favorites}
+          snapshot={snapshot}
+          routes={routes}
+          selectedIcao24={selected}
+          onSelect={selectFromPanel}
+          onUnstar={toggleFavorite}
+        />
       )}
       {size.width > 0 && (
         <GlobeGL
