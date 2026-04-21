@@ -107,10 +107,15 @@ function updatePlaneMesh(
 ): void {
   const r = reckon(state, nowMs);
   if (!r || r.stale || !globe) {
+    // Three.js's Raycaster does NOT skip invisible meshes by default — it
+    // only tests against the layer mask. Disable all layers on hidden meshes
+    // so they can't steal clicks from visible ones below/around them.
     mesh.visible = false;
+    mesh.layers.disableAll();
     return;
   }
   mesh.visible = true;
+  mesh.layers.enable(0);
 
   const altFrac = Math.min(r.alt / 800_000, 0.03);
   const coords = globe.getCoords(r.lat, r.lng, altFrac);
