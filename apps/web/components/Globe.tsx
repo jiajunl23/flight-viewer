@@ -112,6 +112,7 @@ function updatePlaneMesh(
   isSelected: boolean,
   isHovered: boolean,
   isLive: boolean,
+  lodKeep: number,
 ): void {
   const r = reckon(state, nowMs);
   if (!r || r.stale || !globe) {
@@ -157,7 +158,13 @@ function updatePlaneMesh(
   //   hovered:   1.35× as a preview ("click here would select")
   //   neither:   1× (category scale only)
   const boost = isSelected ? 1.8 : isHovered ? 1.35 : 1;
-  const scale = categoryScale(state.category) * boost;
+  // LOD compensation: when we're showing ≤50% of planes (zoomed out) scale
+  // the survivors up so they're still recognizable. Ramps smoothly from 1×
+  // at lodKeep=0.5 to 3× at lodKeep=0 so the transition across the pivot
+  // is a gradual growth rather than a visual pop.
+  const lodBoost =
+    lodKeep >= 0.5 ? 1 : 1 + 2 * (0.5 - lodKeep) / 0.5;
+  const scale = categoryScale(state.category) * boost * lodBoost;
   mesh.scale.setScalar(scale);
 
   // Color precedence: selected → cyan, hovered → white, emergency → red,
@@ -572,6 +579,13 @@ export default function Globe() {
   // loop can highlight them. Populated only when a region is active.
   const liveIcao24sRef = useRef<Set<string>>(new Set());
 
+  // Mirror lodKeep into a ref so the rAF loop and customThreeObjectUpdate can
+  // size planes without having a stale-closure copy.
+  const lodKeepRef = useRef(lodKeep);
+  useEffect(() => {
+    lodKeepRef.current = lodKeep;
+  }, [lodKeep]);
+
   // Hovered aircraft — stored as a ref so per-frame lookups don't need state.
   // We also sync a lightweight state just to flip the canvas cursor style.
   const hoveredRef = useRef<string | null>(null);
@@ -701,7 +715,16 @@ export default function Globe() {
           const isHov = icao24 === hoveredRef.current && !isSel;
           const isLive =
             !isSel && !isHov && liveIcao24sRef.current.has(icao24);
-          updatePlaneMesh(mesh, state, globe, now, isSel, isHov, isLive);
+          updatePlaneMesh(
+            mesh,
+            state,
+            globe,
+            now,
+            isSel,
+            isHov,
+            isLive,
+            lodKeepRef.current,
+          );
           if (isSel) selectedMesh = mesh;
         });
 
@@ -999,6 +1022,7 @@ export default function Globe() {
               isSel,
               isHov,
               isLive,
+              lodKeepRef.current,
             );
           }}
         />
