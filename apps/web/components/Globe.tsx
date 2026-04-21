@@ -921,8 +921,7 @@ export default function Globe() {
           onCustomLayerClick={(d: object) => {
             const state = d as AircraftState;
             // Sync-update the ref BEFORE scheduling the React state change so
-            // the next rAF frame already reflects the new selection — avoids
-            // the 1-2 frame flash where the old plane stays highlighted.
+            // the next rAF frame already reflects the new selection.
             selectedRef.current = state.icao24;
             setSelected(state.icao24);
           }}
@@ -931,10 +930,17 @@ export default function Globe() {
             hoveredRef.current = newHover;
             setCursorIsPointer(newHover !== null);
           }}
-          // Clicking empty globe surface clears the selected plane so the
-          // popover dismisses. Clicks in the black background around the
-          // globe are handled by the container's onClick below.
+          // Clicking the globe: if the user is currently hovering a plane
+          // (white preview visible), commit THAT as the selection — the
+          // raycaster happened to miss the plane mesh by a pixel or two due
+          // to mouse jitter, but the hover state is the right truth. Only
+          // fall through to deselect if nothing is being hovered.
           onGlobeClick={() => {
+            if (hoveredRef.current) {
+              selectedRef.current = hoveredRef.current;
+              setSelected(hoveredRef.current);
+              return;
+            }
             selectedRef.current = null;
             setSelected(null);
           }}
