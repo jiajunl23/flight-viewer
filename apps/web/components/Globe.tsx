@@ -458,6 +458,60 @@ export default function Globe() {
     selectedRef.current = selected;
   }, [selected]);
 
+  // Idle auto-recenter — if the user rotates away and then stops interacting
+  // for IDLE_MS, smoothly animate back to home over RETURN_MS.
+  // "Home" is the active region's hub (if picked) else the CONUS default.
+  const lastInteractionRef = useRef<number>(Date.now());
+  // Ref-copy of region so the setInterval callback always sees the latest.
+  const regionRef = useRef<Region | null>(region);
+  useEffect(() => {
+    regionRef.current = region;
+    // A region change IS a deliberate camera jump — reset idle so the user
+    // has a moment to look around before auto-recenter kicks in again.
+    lastInteractionRef.current = Date.now();
+  }, [region]);
+
+  useEffect(() => {
+    const globe = globeRef.current;
+    if (!globe) return;
+    const canvas = globe.renderer?.().domElement;
+    if (!canvas) return;
+    const mark = () => {
+      lastInteractionRef.current = Date.now();
+    };
+    canvas.addEventListener("pointerdown", mark);
+    canvas.addEventListener("wheel", mark, { passive: true });
+    canvas.addEventListener("touchstart", mark, { passive: true });
+    return () => {
+      canvas.removeEventListener("pointerdown", mark);
+      canvas.removeEventListener("wheel", mark);
+      canvas.removeEventListener("touchstart", mark);
+    };
+  }, []);
+
+  useEffect(() => {
+    const IDLE_MS = 15_000;
+    const RETURN_MS = 3_000;
+    const check = setInterval(() => {
+      const globe = globeRef.current;
+      if (!globe) return;
+      if (Date.now() - lastInteractionRef.current < IDLE_MS) return;
+      const pov = globe.pointOfView();
+      const home: { lat: number; lng: number; altitude: number } = regionRef.current
+        ? { lat: regionRef.current.lat, lng: regionRef.current.lon, altitude: 0.45 }
+        : { lat: 39, lng: -97, altitude: 1.1 };
+      const dLat = Math.abs(pov.lat - home.lat);
+      const dLng = Math.abs(((pov.lng - home.lng + 540) % 360) - 180);
+      const dAlt = Math.abs(pov.altitude - home.altitude);
+      if (dLat < 3 && dLng < 3 && dAlt < 0.15) return;
+      globe.pointOfView(home, RETURN_MS);
+      // Prevent immediate re-trigger: bump the idle timer so we don't fire
+      // again until the user has had time to look at the recentred view.
+      lastInteractionRef.current = Date.now() + RETURN_MS;
+    }, 2_000);
+    return () => clearInterval(check);
+  }, []);
+
   // Per-frame dead-reckoning: walk the scene on every rAF and extrapolate
   // each plane mesh from its last known state. react-globe.gl's
   // customThreeObjectUpdate only fires when data changes, not per frame.
