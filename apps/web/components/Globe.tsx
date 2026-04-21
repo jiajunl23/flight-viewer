@@ -111,6 +111,7 @@ function updatePlaneMesh(
   nowMs: number,
   isSelected: boolean,
   isHovered: boolean,
+  isLive: boolean,
 ): void {
   const r = reckon(state, nowMs);
   if (!r || r.stale || !globe) {
@@ -154,25 +155,36 @@ function updatePlaneMesh(
   // Scale by ADS-B emitter category — heavies render bigger, helicopters smaller.
   //   selected:  1.8× for strong visual focus
   //   hovered:   1.35× as a preview ("click here would select")
+  //   live:      1.3× with a subtle breathing pulse so live-tracked planes
+  //              are obviously distinct from the baseline Railway snapshot
   //   neither:   1× (category scale only)
-  const boost = isSelected ? 1.8 : isHovered ? 1.35 : 1;
+  let boost = 1;
+  if (isSelected) boost = 1.8;
+  else if (isHovered) boost = 1.35;
+  else if (isLive) {
+    // Breathe between 1.2× and 1.4× at ~1.4 Hz so live planes visibly pulse.
+    const pulse = 1.3 + 0.1 * Math.sin(nowMs / 110);
+    boost = pulse;
+  }
   const scale = categoryScale(state.category) * boost;
   mesh.scale.setScalar(scale);
 
   // Color precedence: selected → cyan, hovered → white, emergency → red,
-  // otherwise speed band.
+  // live (1 Hz viewport) → gold, otherwise speed band.
   const colorHex = isSelected
     ? 0x22d3ee
     : isHovered
       ? 0xffffff
       : isEmergency(state.emergency, state.squawk)
         ? 0xff0000
-        : speedColorHex(state.velocity ?? 0);
+        : isLive
+          ? 0xfbbf24
+          : speedColorHex(state.velocity ?? 0);
   if (mesh.__lastColor !== colorHex) {
     (mesh.material as THREE.MeshBasicMaterial).color.setHex(colorHex);
     mesh.__lastColor = colorHex;
   }
-  mesh.renderOrder = isSelected ? 3 : isHovered ? 2 : 1;
+  mesh.renderOrder = isSelected ? 3 : isHovered ? 2 : isLive ? 2 : 1;
 }
 
 export default function Globe() {
@@ -494,6 +506,7 @@ export default function Globe() {
   useEffect(() => {
     if (!region) {
       setViewportCount(null);
+      liveIcao24sRef.current = new Set();
       return;
     }
     let cancelled = false;
@@ -528,6 +541,9 @@ export default function Globe() {
             };
             if (cancelled) return;
             setViewportCount(body.states.length);
+            const liveSet = new Set<string>();
+            for (const s of body.states) liveSet.add(s.icao24);
+            liveIcao24sRef.current = liveSet;
             setSnapshot((prev) => {
               const next = new Map(prev);
               for (const s of body.states) next.set(s.icao24, s);
@@ -560,6 +576,10 @@ export default function Globe() {
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
+
+  // Set of icao24s currently reported by the 1 Hz viewport poll, so the rAF
+  // loop can highlight them. Populated only when a region is active.
+  const liveIcao24sRef = useRef<Set<string>>(new Set());
 
   // Hovered aircraft — stored as a ref so per-frame lookups don't need state.
   // We also sync a lightweight state just to flip the canvas cursor style.
@@ -688,7 +708,9 @@ export default function Globe() {
           if (!state) return;
           const isSel = icao24 === sel;
           const isHov = icao24 === hoveredRef.current && !isSel;
-          updatePlaneMesh(mesh, state, globe, now, isSel, isHov);
+          const isLive =
+            !isSel && !isHov && liveIcao24sRef.current.has(icao24);
+          updatePlaneMesh(mesh, state, globe, now, isSel, isHov, isLive);
           if (isSel) selectedMesh = mesh;
         });
 
@@ -730,8 +752,15 @@ export default function Globe() {
           )}
         </div>
         {viewportCount !== null && region && (
-          <div className="text-emerald-400">
-            {region.name}: {viewportCount} live (1 Hz)
+          <div className="text-emerald-400 flex items-center gap-1.5">
+            <span>
+              {region.name}: {viewportCount} live (1 Hz)
+            </span>
+            <span
+              className="inline-block h-2 w-2 rounded-full bg-amber-400 animate-pulse"
+              aria-hidden
+            />
+            <span className="text-[10px] text-amber-300/80">pulsing = live</span>
           </div>
         )}
       </div>
@@ -969,6 +998,8 @@ export default function Globe() {
             const state = d as AircraftState;
             const isSel = state.icao24 === selectedRef.current;
             const isHov = state.icao24 === hoveredRef.current && !isSel;
+            const isLive =
+              !isSel && !isHov && liveIcao24sRef.current.has(state.icao24);
             updatePlaneMesh(
               obj as PlaneMesh,
               state,
@@ -976,6 +1007,7 @@ export default function Globe() {
               Date.now(),
               isSel,
               isHov,
+              isLive,
             );
           }}
         />
