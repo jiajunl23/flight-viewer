@@ -28,6 +28,7 @@ export type RouteInfo = {
 };
 
 const CACHE_TTL_MS = 10 * 60_000;
+const FAIL_CACHE_TTL_MS = 60_000; // short cache on upstream errors
 const cache = new Map<string, { data: RouteInfo | null; expires: number }>();
 
 type UpstreamAirport = {
@@ -85,8 +86,14 @@ export async function GET(
       body: JSON.stringify({ planes: [{ callsign, lat, lng }] }),
     });
     if (!res.ok) {
+      // Cache a null result briefly so transient 5xx from adsb.lol doesn't
+      // cause every client to re-hit this route 60× per minute. The client
+      // side also backs off but this is a defence in depth — even if a
+      // buggy client spams us, we only hit upstream once per minute per
+      // callsign.
+      cache.set(callsign, { data: null, expires: now + FAIL_CACHE_TTL_MS });
       return NextResponse.json(
-        { error: `upstream ${res.status}` },
+        { error: `upstream ${res.status}`, route: null },
         { status: 502 },
       );
     }

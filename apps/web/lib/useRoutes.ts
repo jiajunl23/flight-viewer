@@ -33,7 +33,11 @@ export function useRoutes(): {
     () => new Map(),
   );
   const inFlight = useRef<Set<string>>(new Set());
-  const knownRef = useRef<Set<string>>(new Set());
+  // Tracks callsigns we've already resolved (success or failure) plus a
+  // cooldown timestamp for failures. Prevents a 500ms snapshot-triggered
+  // useEffect from re-hammering the same callsign at 2+ req/sec.
+  const triedAt = useRef<Map<string, number>>(new Map());
+  const FAILURE_COOLDOWN_MS = 60_000; // retry at most once per minute per callsign
 
   const fetchRoute = useCallback(
     (
@@ -45,7 +49,8 @@ export function useRoutes(): {
       const callsign = callsignRaw.trim().toUpperCase();
       if (!callsign) return;
       if (inFlight.current.has(callsign)) return;
-      if (knownRef.current.has(callsign)) return;
+      const lastTry = triedAt.current.get(callsign);
+      if (lastTry && Date.now() - lastTry < FAILURE_COOLDOWN_MS) return;
 
       inFlight.current.add(callsign);
       void (async () => {
@@ -55,16 +60,21 @@ export function useRoutes(): {
           if (lng != null) qs.set("lng", String(lng));
           const url = `/api/route/${encodeURIComponent(callsign)}${qs.size ? `?${qs}` : ""}`;
           const res = await fetch(url, { cache: "no-store" });
-          if (!res.ok) return;
+          if (!res.ok) {
+            // Mark as tried even on failure so we don't retry every 500ms.
+            triedAt.current.set(callsign, Date.now());
+            return;
+          }
           const body = (await res.json()) as { route: RouteInfo | null };
-          knownRef.current.add(callsign);
+          // Success: "tried far in the future" so this never re-fetches.
+          triedAt.current.set(callsign, Date.now() + 365 * 24 * 3600_000);
           setRoutes((prev) => {
             const next = new Map(prev);
             next.set(callsign, body.route);
             return next;
           });
         } catch {
-          // Swallow — we'll retry on next selection if needed.
+          triedAt.current.set(callsign, Date.now());
         } finally {
           inFlight.current.delete(callsign);
         }
