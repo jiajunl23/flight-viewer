@@ -177,7 +177,7 @@ function updatePlaneMesh(
   mesh.scale.setScalar(scale);
 
   // Color precedence: selected → cyan, hovered → white, emergency → red,
-  // live (1 Hz viewport) → gold, otherwise speed band.
+  // live (1 Hz viewport) → purple, otherwise speed band.
   const colorHex = isSelected
     ? 0x22d3ee
     : isHovered
@@ -185,7 +185,7 @@ function updatePlaneMesh(
       : isEmergency(state.emergency, state.squawk)
         ? 0xff0000
         : isLive
-          ? 0xfbbf24
+          ? 0xa855f7
           : speedColorHex(state.velocity ?? 0);
   if (mesh.__lastColor !== colorHex) {
     (mesh.material as THREE.MeshBasicMaterial).color.setHex(colorHex);
@@ -780,10 +780,10 @@ export default function Globe() {
               {region.name}: {viewportCount} live (1 Hz)
             </span>
             <span
-              className="inline-block h-2 w-2 rounded-sm bg-amber-400"
+              className="inline-block h-2 w-2 rounded-sm bg-purple-500"
               aria-hidden
             />
-            <span className="text-[10px] text-amber-300/80">gold = live</span>
+            <span className="text-[10px] text-purple-300/80">purple = live</span>
           </div>
         )}
       </div>
