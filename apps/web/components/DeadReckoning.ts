@@ -2,8 +2,16 @@ import type { AircraftState } from "shared";
 
 const R_EARTH_M = 6_371_000;
 
-/** Drop aircraft once server data is more than this stale. */
-export const MAX_HORIZON_S = 120;
+/** Drop aircraft once server data is more than this stale.
+ *
+ * Was 120s but that's the same order of magnitude as one complete NA tile
+ * rotation (20 tiles × 3s = 60s). A short burst of adsb.lol 429s stretches
+ * the rotation to 120-200s via error backoff, causing every plane for a
+ * hub to fall past 120s and visibly vanish. 300s comfortably absorbs a
+ * few minutes of transient upstream pain; extrapolation error at 250 m/s
+ * × 300s is ~75 km which is tolerable at regional+ zoom. Prune TTL on the
+ * server side is 900s so DB still holds the rows. */
+export const MAX_HORIZON_S = 300;
 
 export interface Reckoned {
   lat: number;

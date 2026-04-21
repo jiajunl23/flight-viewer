@@ -9,7 +9,11 @@ export interface PollerConfig {
   supabase: SupabaseClient;
 }
 
-const MAX_BACKOFF_MS = 60_000;
+// Keep the backoff ceiling modest: the rotation is 20 tiles × intervalMs, so
+// a persistent 60s backoff would push one complete sweep past 20 minutes and
+// every hub on the client would vanish well past the 300s stale horizon. 10s
+// caps worst-case sweep at 20×10 = 200s even if every tile errors.
+const MAX_BACKOFF_MS = 10_000;
 
 /**
  * Rotates through NA_TILES at one tile per tileIntervalMs. Each tick hits one
