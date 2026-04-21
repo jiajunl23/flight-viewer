@@ -721,9 +721,10 @@ export default function Globe() {
       <div className="absolute top-3 left-3 z-10 text-xs text-zinc-400 bg-black/50 backdrop-blur px-2 py-1 rounded space-y-0.5">
         <div>
           {visibleCount.toLocaleString()} aircraft
-          {lodKeep < 1 && (
+          {snapshot.size > 0 && visibleCount < snapshot.size && (
             <span className="ml-1 text-zinc-600">
-              (of {snapshot.size.toLocaleString()}, {Math.round(lodKeep * 100)}%)
+              (of {snapshot.size.toLocaleString()},{" "}
+              {Math.round((visibleCount / snapshot.size) * 100)}%)
             </span>
           )}
         </div>

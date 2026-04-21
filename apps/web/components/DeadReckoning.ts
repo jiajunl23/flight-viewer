@@ -107,38 +107,51 @@ export function icao24Hash(icao24: string): number {
 }
 
 /**
- * Altitude-based BASE keep-fraction — sets the ceiling for density at the
- * current zoom level. Progression is smooth through the zoomed-in range so
- * density grows gradually as you zoom (100% only at true city-level zoom).
+ * Altitude-based keep-fraction — linearly interpolated between breakpoints so
+ * the count doesn't pop when crossing a band. Breakpoints:
  *
- * Zoomed-in ramp (100% → 50%):
- *   altitude ≤ 0.05  → 100%
- *   altitude ≤ 0.12  → 95%
- *   altitude ≤ 0.20  → 85%
- *   altitude ≤ 0.30  → 75%
- *   altitude ≤ 0.40  → 65%
- *   altitude ≤ 0.50  → 55%
- *   altitude ≤ 0.60  → 50%   ← baseline
- * Zoomed-out tail (below 50%):
- *   altitude ≤ 0.90  → 35%
- *   altitude ≤ 1.30  → 20%
- *   altitude ≤ 1.80  → 10%
- *   altitude ≤ 2.50  → 5%
- *   else            → 2%
+ *   altitude 0.05 → 100%
+ *   altitude 0.12 → 95%
+ *   altitude 0.20 → 85%
+ *   altitude 0.30 → 75%
+ *   altitude 0.40 → 65%
+ *   altitude 0.50 → 55%
+ *   altitude 0.60 → 50%   ← baseline
+ *   altitude 0.90 → 35%
+ *   altitude 1.30 → 20%
+ *   altitude 1.80 → 10%
+ *   altitude 2.50 → 5%
+ *   altitude ∞    → 2%
+ *
+ * Below 0.05 clamps to 100%. Within a band we lerp so a 0.01 zoom nudge moves
+ * the keep a tiny amount, never a sudden 15% jump.
  */
+const LOD_BANDS: ReadonlyArray<readonly [number, number]> = [
+  [0.05, 1.0],
+  [0.12, 0.95],
+  [0.2, 0.85],
+  [0.3, 0.75],
+  [0.4, 0.65],
+  [0.5, 0.55],
+  [0.6, 0.5],
+  [0.9, 0.35],
+  [1.3, 0.2],
+  [1.8, 0.1],
+  [2.5, 0.05],
+  [4.0, 0.02],
+];
+
 export function lodKeepFraction(altitude: number): number {
-  if (altitude <= 0.05) return 1.0;
-  if (altitude <= 0.12) return 0.95;
-  if (altitude <= 0.2) return 0.85;
-  if (altitude <= 0.3) return 0.75;
-  if (altitude <= 0.4) return 0.65;
-  if (altitude <= 0.5) return 0.55;
-  if (altitude <= 0.6) return 0.5;
-  if (altitude <= 0.9) return 0.35;
-  if (altitude <= 1.3) return 0.2;
-  if (altitude <= 1.8) return 0.1;
-  if (altitude <= 2.5) return 0.05;
-  return 0.02;
+  if (altitude <= LOD_BANDS[0]![0]) return LOD_BANDS[0]![1];
+  for (let i = 1; i < LOD_BANDS.length; i++) {
+    const [hiAlt, hiKeep] = LOD_BANDS[i]!;
+    if (altitude <= hiAlt) {
+      const [loAlt, loKeep] = LOD_BANDS[i - 1]!;
+      const t = (altitude - loAlt) / (hiAlt - loAlt);
+      return loKeep + t * (hiKeep - loKeep);
+    }
+  }
+  return LOD_BANDS[LOD_BANDS.length - 1]![1];
 }
 
 /**
