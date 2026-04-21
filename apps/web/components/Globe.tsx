@@ -104,6 +104,7 @@ function updatePlaneMesh(
   globe: GlobeMethods | undefined,
   nowMs: number,
   isSelected: boolean,
+  isHovered: boolean,
 ): void {
   const r = reckon(state, nowMs);
   if (!r || r.stale || !globe) {
@@ -115,7 +116,15 @@ function updatePlaneMesh(
     return;
   }
   mesh.visible = true;
-  mesh.layers.enable(0);
+  // Selected planes get their hit-test disabled so clicks pass through to
+  // neighboring planes (switching selection becomes one-click) OR fall to
+  // the globe surface to deselect. Clicking the selected plane itself is a
+  // no-op anyway — its info is already in the popover.
+  if (isSelected) {
+    mesh.layers.disableAll();
+  } else {
+    mesh.layers.enable(0);
+  }
 
   const altFrac = Math.min(r.alt / 800_000, 0.03);
   const coords = globe.getCoords(r.lat, r.lng, altFrac);
@@ -140,21 +149,27 @@ function updatePlaneMesh(
   mesh.rotateZ(-headingRad);
 
   // Scale by ADS-B emitter category — heavies render bigger, helicopters smaller.
-  // Selected aircraft get an additional 1.8× boost so they stand out.
-  const scale = categoryScale(state.category) * (isSelected ? 1.8 : 1);
+  //   selected:  1.8× for strong visual focus
+  //   hovered:   1.35× as a preview ("click here would select")
+  //   neither:   1× (category scale only)
+  const boost = isSelected ? 1.8 : isHovered ? 1.35 : 1;
+  const scale = categoryScale(state.category) * boost;
   mesh.scale.setScalar(scale);
 
-  // Color: selected → cyan (most prominent), emergency → red, otherwise speed band.
+  // Color precedence: selected → cyan, hovered → white, emergency → red,
+  // otherwise speed band.
   const colorHex = isSelected
     ? 0x22d3ee
-    : isEmergency(state.emergency, state.squawk)
-      ? 0xff0000
-      : speedColorHex(state.velocity ?? 0);
+    : isHovered
+      ? 0xffffff
+      : isEmergency(state.emergency, state.squawk)
+        ? 0xff0000
+        : speedColorHex(state.velocity ?? 0);
   if (mesh.__lastColor !== colorHex) {
     (mesh.material as THREE.MeshBasicMaterial).color.setHex(colorHex);
     mesh.__lastColor = colorHex;
   }
-  mesh.renderOrder = isSelected ? 2 : 1;
+  mesh.renderOrder = isSelected ? 3 : isHovered ? 2 : 1;
 }
 
 export default function Globe() {
@@ -549,6 +564,11 @@ export default function Globe() {
     selectedRef.current = selected;
   }, [selected]);
 
+  // Hovered aircraft — stored as a ref so per-frame lookups don't need state.
+  // We also sync a lightweight state just to flip the canvas cursor style.
+  const hoveredRef = useRef<string | null>(null);
+  const [cursorIsPointer, setCursorIsPointer] = useState(false);
+
   // Idle auto-recenter — if the user rotates away and then stops interacting
   // for IDLE_MS, smoothly animate back to home over RETURN_MS.
   // "Home" is the active region's hub (if picked) else the CONUS default.
@@ -663,7 +683,8 @@ export default function Globe() {
           const state = snapshotRef.current.get(icao24);
           if (!state) return;
           const isSel = icao24 === sel;
-          updatePlaneMesh(mesh, state, globe, now, isSel);
+          const isHov = icao24 === hoveredRef.current && !isSel;
+          updatePlaneMesh(mesh, state, globe, now, isSel, isHov);
           if (isSel) selectedMesh = mesh;
         });
 
@@ -691,7 +712,10 @@ export default function Globe() {
   }, []);
 
   return (
-    <div ref={containerRef} className="relative flex-1 overflow-hidden">
+    <div
+      ref={containerRef}
+      className={`relative flex-1 overflow-hidden ${cursorIsPointer ? "cursor-pointer" : ""}`}
+    >
       <div className="absolute top-3 left-3 z-10 text-xs text-zinc-400 bg-black/50 backdrop-blur px-2 py-1 rounded space-y-0.5">
         <div>
           {visibleCount.toLocaleString()} aircraft
@@ -900,6 +924,11 @@ export default function Globe() {
             selectedRef.current = state.icao24;
             setSelected(state.icao24);
           }}
+          onCustomLayerHover={(d: object | null) => {
+            const newHover = d ? (d as AircraftState).icao24 : null;
+            hoveredRef.current = newHover;
+            setCursorIsPointer(newHover !== null);
+          }}
           // Clicking empty globe surface clears the selected plane so the
           // popover dismisses. Clicks in the black background around the
           // globe are handled by the container's onClick below.
@@ -909,14 +938,17 @@ export default function Globe() {
           }}
           customThreeObjectUpdate={(obj: object, d: object) => {
             // Fires once when the data row changes (e.g. new server tick).
-            // Per-frame interpolation happens in the rAF loop below.
+            // Per-frame interpolation + hover/select happen in the rAF loop.
             const state = d as AircraftState;
+            const isSel = state.icao24 === selectedRef.current;
+            const isHov = state.icao24 === hoveredRef.current && !isSel;
             updatePlaneMesh(
               obj as PlaneMesh,
               state,
               globeRef.current,
               Date.now(),
-              state.icao24 === selectedRef.current,
+              isSel,
+              isHov,
             );
           }}
         />
