@@ -340,7 +340,13 @@ export default function Globe() {
       );
       if (d > radiusLimit) return false;
 
-      const effectiveKeep = lodKeep * ringKeepMultiplier(d / safeRadius);
+      // At city-level zoom (lodKeep=1) the visible cap is small enough that
+      // the ring falloff becomes overkill — everything "nearby" is relevant.
+      // Skip it so zoomed-in users actually see 100% of planes in view.
+      const effectiveKeep =
+        lodKeep >= 1
+          ? 1
+          : lodKeep * ringKeepMultiplier(d / safeRadius);
       if (effectiveKeep >= 1) return true;
       return icao24Hash(s.icao24) < effectiveKeep;
     });

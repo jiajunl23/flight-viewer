@@ -100,23 +100,25 @@ export function icao24Hash(icao24: string): number {
 
 /**
  * Altitude-based BASE keep-fraction — sets the ceiling for density at the
- * current zoom level. Multiplied per-plane by `ringKeepMultiplier` based on
- * how close the plane is to the view center (see below), so the final
- * effective density is `base × ring`.
+ * current zoom level. Combined with `ringKeepMultiplier` for concentric
+ * falloff from the camera center.
  *
- * 100% only at very low altitude (true zoomed-in hub/airport view). At
- * everything else, even the inner ring caps below 100% so the page stays
- * performant.
+ * Mental model:
+ *   ≤ 0.2  city view   → 100% (ring falloff disabled too — everything nearby)
+ *   ≤ 0.5  state view  → 50% at center, less further out
+ *   ≤ 0.9  regional    → 22%
+ *   ≤ 1.3  country     → 10%
+ *   ≤ 1.8  continental → 6%
+ *   higher  globe view → 2-3%
  */
 export function lodKeepFraction(altitude: number): number {
-  if (altitude <= 0.3) return 1.0; // airport/hub — fully zoomed in
-  if (altitude <= 0.6) return 0.7;
-  if (altitude <= 1.0) return 0.5;
-  if (altitude <= 1.4) return 0.3;
-  if (altitude <= 1.8) return 0.2;
-  if (altitude <= 2.4) return 0.12;
-  if (altitude <= 3.0) return 0.08;
-  return 0.05;
+  if (altitude <= 0.2) return 1.0; // city
+  if (altitude <= 0.5) return 0.5; // state
+  if (altitude <= 0.9) return 0.22; // regional
+  if (altitude <= 1.3) return 0.1; // country
+  if (altitude <= 1.8) return 0.06; // continental
+  if (altitude <= 2.5) return 0.035;
+  return 0.02;
 }
 
 /**
