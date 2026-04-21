@@ -498,9 +498,12 @@ export default function Globe() {
     }
     let cancelled = false;
 
-    // Fly the camera to the region.
+    // Fly the camera to the region. Use a *close* airport-ish zoom so plane
+    // motion is actually perceptible — at altitude 0.45 a 250 m/s airliner
+    // moves ~0.3 px/s, which reads as frozen. At 0.15 the same plane moves
+    // ~1 px/s, clearly live.
     globeRef.current?.pointOfView(
-      { lat: region.lat, lng: region.lon, altitude: 0.45 },
+      { lat: region.lat, lng: region.lon, altitude: 0.15 },
       1200,
     );
 
