@@ -207,16 +207,38 @@ export function combinedKeepFraction(
 }
 
 /**
- * Angular radius (in radians) of the spherical cap visible from a camera at
- * the given altitude above a unit-radius globe. Derived from simple tangent
- * geometry: cos(α) = R / (R + h), R = 1. So α = acos(1 / (1 + altitude)).
+ * Angular radius (in radians) of the ground cap the camera can actually see.
  *
- * Planes outside this cap are literally behind the horizon and wouldn't be
- * visible even without culling — dropping them saves per-frame work.
+ * Returns `min(horizon radius, FOV-constrained radius)`. The horizon is the
+ * "behind the curve" cutoff at acos(1/(1+h)). At low altitudes that's much
+ * wider than the camera actually shows — e.g. at h=0.15 the horizon is ~30°
+ * but a 50° vertical FOV camera only renders ~4° of ground. Using the
+ * horizon alone kept ~7× too many planes in the spatial cull at low zoom,
+ * which the user observed as "3000 flights despite small focused zoom."
+ *
+ * FOV-constrained radius solves sin(θ)/((1+h) − cos(θ)) = tan(fov/2) for θ.
+ * The quadratic gives cos(θ) = [t²d + √(1 + t²(1 − d²))] / (1 + t²) where
+ * d = 1 + h, t = tan(fov/2). Real solution only when h is small enough that
+ * the FOV doesn't already contain the whole hemisphere — above that altitude
+ * the discriminant flips negative and we fall back to the horizon.
  */
+const HALF_VERTICAL_FOV_RAD = (50 / 2) * (Math.PI / 180); // three.js default = 50° vertical
+const TAN_HALF_FOV = Math.tan(HALF_VERTICAL_FOV_RAD);
+const TAN_HALF_FOV_SQ = TAN_HALF_FOV * TAN_HALF_FOV;
+
 export function visibleAngularRadiusRad(altitude: number): number {
-  const clamped = Math.max(0.001, altitude);
-  return Math.acos(Math.min(1, 1 / (1 + clamped)));
+  const h = Math.max(0.001, altitude);
+  const d = 1 + h;
+  const thetaHorizon = Math.acos(Math.min(1, 1 / d));
+
+  const disc = 1 + TAN_HALF_FOV_SQ * (1 - d * d);
+  if (disc <= 0) return thetaHorizon; // FOV sees past the horizon anyway
+
+  const cosThetaFov =
+    (TAN_HALF_FOV_SQ * d + Math.sqrt(disc)) / (1 + TAN_HALF_FOV_SQ);
+  const clamped = Math.max(-1, Math.min(1, cosThetaFov));
+  const thetaFov = Math.acos(clamped);
+  return Math.min(thetaFov, thetaHorizon);
 }
 
 /**
