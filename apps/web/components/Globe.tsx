@@ -29,7 +29,6 @@ import ThemeSwitcher, {
 import FavoritesStar from "./FavoritesStar";
 import FavoritesPanel from "./FavoritesPanel";
 import { aircraftMatches } from "@/lib/prefs";
-import { useRoutes } from "@/lib/useRoutes";
 import { useAuth, useUser } from "@clerk/nextjs";
 
 const GlobeGL = dynamic(() => import("react-globe.gl"), {
@@ -250,7 +249,6 @@ export default function Globe() {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const { isSignedIn } = useUser();
   const { getToken: _getToken } = useAuth();
-  const { routes, fetchRoute } = useRoutes();
 
   // Keep the latest snapshot reachable from the per-frame update callback.
   const snapshotRef = useRef(snapshot);
@@ -457,34 +455,10 @@ export default function Globe() {
     setFavorites((prev) => {
       const next = new Set(prev);
       if (next.has(icao24)) next.delete(icao24);
-      else {
-        next.add(icao24);
-        // Fetch route for the newly-starred aircraft so the Tracking panel
-        // can display src → dst.
-        const state = snapshotRef.current.get(icao24);
-        if (state?.callsign)
-          fetchRoute(state.callsign, state.latitude, state.longitude);
-      }
+      else next.add(icao24);
       return next;
     });
   };
-
-  // Whenever the selected aircraft changes, lazily look up its route so the
-  // popover can show src → dst. Cached per callsign.
-  useEffect(() => {
-    if (!selected) return;
-    const s = snapshot.get(selected);
-    if (s?.callsign) fetchRoute(s.callsign, s.latitude, s.longitude);
-  }, [selected, snapshot, fetchRoute]);
-
-  // On mount: fetch routes for any planes already in the favorites set (after
-  // preferences load). Prevents an empty panel on page reload.
-  useEffect(() => {
-    for (const id of favorites) {
-      const s = snapshot.get(id);
-      if (s?.callsign) fetchRoute(s.callsign, s.latitude, s.longitude);
-    }
-  }, [favorites, snapshot, fetchRoute]);
 
   const selectFromPanel = (icao24: string): void => {
     selectedRef.current = icao24;
@@ -876,19 +850,6 @@ export default function Globe() {
               )}
             </div>
           )}
-          {(() => {
-            const callsignKey = selectedState.callsign?.trim().toUpperCase();
-            const route = callsignKey ? routes.get(callsignKey) : undefined;
-            if (!route?.src?.iata || !route?.dst?.iata) return null;
-            return (
-              <div className="text-cyan-300 text-[11px] font-mono">
-                {route.src.iata} → {route.dst.iata}
-                <span className="block text-zinc-500 font-sans">
-                  {route.src.location} → {route.dst.location}
-                </span>
-              </div>
-            );
-          })()}
           {isEmergency(selectedState.emergency, selectedState.squawk) && (
             <div className="text-red-300 font-semibold">
               ⚠ EMERGENCY{" "}
@@ -918,7 +879,6 @@ export default function Globe() {
         <FavoritesPanel
           favorites={favorites}
           snapshot={snapshot}
-          routes={routes}
           selectedIcao24={selected}
           onSelect={selectFromPanel}
           onUnstar={toggleFavorite}

@@ -1,21 +1,19 @@
 "use client";
 
 import type { AircraftState } from "shared";
-import type { RouteInfo } from "@/lib/useRoutes";
 
 interface Props {
   favorites: Set<string>;
   snapshot: Map<string, AircraftState>;
-  routes: Map<string, RouteInfo | null>;
   selectedIcao24: string | null;
   onSelect: (icao24: string) => void;
   onUnstar: (icao24: string) => void;
 }
 
 /**
- * Left-side panel listing the user's tracked aircraft with live altitude,
- * ground speed, and (when known) src → dst airports. Currently-selected
- * aircraft is highlighted. Click a row to focus it on the globe.
+ * Left-side panel listing the user's tracked aircraft with live altitude and
+ * ground speed. Currently-selected aircraft is highlighted. Click a row to
+ * focus it on the globe.
  *
  * Collapses to a compact header when nothing is favorited so it doesn't
  * clutter the layout for new users.
@@ -23,7 +21,6 @@ interface Props {
 export default function FavoritesPanel({
   favorites,
   snapshot,
-  routes,
   selectedIcao24,
   onSelect,
   onUnstar,
@@ -48,10 +45,6 @@ export default function FavoritesPanel({
       <ul className="divide-y divide-white/5">
         {ids.map((id) => {
           const s = snapshot.get(id);
-          const route =
-            s?.callsign != null
-              ? routes.get(s.callsign.trim().toUpperCase())
-              : null;
           const isSelected = id === selectedIcao24;
           const alt = s?.baro_altitude ?? s?.geo_altitude ?? null;
           const gs = s?.velocity ?? null;
@@ -83,24 +76,6 @@ export default function FavoritesPanel({
                   ★
                 </button>
               </div>
-
-              {/* Route */}
-              {route?.src?.iata && route?.dst?.iata ? (
-                <div className="mt-0.5 text-cyan-300 text-[11px] font-mono">
-                  {route.src.iata} → {route.dst.iata}
-                  <span className="ml-1 text-zinc-500">
-                    {route.src.location} → {route.dst.location}
-                  </span>
-                </div>
-              ) : route === undefined ? (
-                <div className="mt-0.5 text-zinc-600 text-[11px]">
-                  looking up route…
-                </div>
-              ) : (
-                <div className="mt-0.5 text-zinc-600 text-[11px]">
-                  no route on file
-                </div>
-              )}
 
               {/* Live stats */}
               <div className="mt-1 text-zinc-400 text-[11px] flex gap-3">
