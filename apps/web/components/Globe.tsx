@@ -9,12 +9,12 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 import {
   angularDistanceRad,
   categoryScale,
+  combinedKeepFraction,
   icao24Hash,
   isEmergency,
   lodKeepFraction,
   MAX_HORIZON_S,
   reckon,
-  ringKeepMultiplier,
   speedColorHex,
   visibleAngularRadiusRad,
 } from "./DeadReckoning";
@@ -364,13 +364,10 @@ export default function Globe() {
       );
       if (d > radiusLimit) return false;
 
-      // At city-level zoom (lodKeep=1) the visible cap is small enough that
-      // the ring falloff becomes overkill — everything "nearby" is relevant.
-      // Skip it so zoomed-in users actually see 100% of planes in view.
-      const effectiveKeep =
-        lodKeep >= 1
-          ? 1
-          : lodKeep * ringKeepMultiplier(d / safeRadius);
+      // Combined keep: at high base (zoomed in) the extra density only
+      // applies in the small focus zone; outside it falls back to 50% +
+      // ring falloff. Below 50% base it's the plain base × ring behavior.
+      const effectiveKeep = combinedKeepFraction(lodKeep, d / safeRadius);
       if (effectiveKeep >= 1) return true;
       return icao24Hash(s.icao24) < effectiveKeep;
     });

@@ -100,24 +100,36 @@ export function icao24Hash(icao24: string): number {
 
 /**
  * Altitude-based BASE keep-fraction — sets the ceiling for density at the
- * current zoom level. Combined with `ringKeepMultiplier` for concentric
- * falloff from the camera center.
+ * current zoom level. Progression is smooth through the zoomed-in range so
+ * density grows gradually as you zoom (100% only at true city-level zoom).
  *
- * Mental model:
- *   ≤ 0.2  city view   → 100% (ring falloff disabled too — everything nearby)
- *   ≤ 0.5  state view  → 50% at center, less further out
- *   ≤ 0.9  regional    → 22%
- *   ≤ 1.3  country     → 10%
- *   ≤ 1.8  continental → 6%
- *   higher  globe view → 2-3%
+ * Zoomed-in ramp (100% → 50%):
+ *   altitude ≤ 0.05  → 100%
+ *   altitude ≤ 0.12  → 95%
+ *   altitude ≤ 0.20  → 85%
+ *   altitude ≤ 0.30  → 75%
+ *   altitude ≤ 0.40  → 65%
+ *   altitude ≤ 0.50  → 55%
+ *   altitude ≤ 0.60  → 50%   ← baseline
+ * Zoomed-out tail (below 50%):
+ *   altitude ≤ 0.90  → 35%
+ *   altitude ≤ 1.30  → 20%
+ *   altitude ≤ 1.80  → 10%
+ *   altitude ≤ 2.50  → 5%
+ *   else            → 2%
  */
 export function lodKeepFraction(altitude: number): number {
-  if (altitude <= 0.2) return 1.0; // city
-  if (altitude <= 0.5) return 0.5; // state
-  if (altitude <= 0.9) return 0.22; // regional
-  if (altitude <= 1.3) return 0.1; // country
-  if (altitude <= 1.8) return 0.06; // continental
-  if (altitude <= 2.5) return 0.035;
+  if (altitude <= 0.05) return 1.0;
+  if (altitude <= 0.12) return 0.95;
+  if (altitude <= 0.2) return 0.85;
+  if (altitude <= 0.3) return 0.75;
+  if (altitude <= 0.4) return 0.65;
+  if (altitude <= 0.5) return 0.55;
+  if (altitude <= 0.6) return 0.5;
+  if (altitude <= 0.9) return 0.35;
+  if (altitude <= 1.3) return 0.2;
+  if (altitude <= 1.8) return 0.1;
+  if (altitude <= 2.5) return 0.05;
   return 0.02;
 }
 
@@ -128,15 +140,49 @@ export function lodKeepFraction(altitude: number): number {
  *   1.0 → plane is at the horizon of the visible cap
  *   1.2 → plane is in the 20% soft-cull margin
  *
- * Result is a multiplier applied to the altitude-based base density. The net
- * effect: planes near where you're looking render densely, planes further out
- * thin out progressively.
+ * Used only when base density ≤ 0.5 (see `combinedKeepFraction`). Above
+ * 50% the combining function handles the falloff differently — focus zone
+ * gets the high base, rest stays at 50% × this multiplier.
  */
 export function ringKeepMultiplier(normalizedDist: number): number {
   if (normalizedDist <= 0.25) return 1.0; // focus zone — full base density
   if (normalizedDist <= 0.5) return 0.6; // inner ring
   if (normalizedDist <= 0.8) return 0.3; // outer ring
   return 0.12; // edge / margin
+}
+
+/**
+ * Combines the altitude-based `lodKeepFraction` with distance-from-view-
+ * center to produce the effective keep fraction for a single plane.
+ *
+ * Rule:
+ * - If the altitude base is ≤ 50%: use the existing ring falloff straight
+ *   across — base × ringKeepMultiplier(normalizedDist).
+ * - If the altitude base is > 50% (zoomed in hard): the extra density only
+ *   applies inside a small focus radius at the center of the view. Outside
+ *   that focus zone, density fades to the 50% baseline, and beyond the fade
+ *   band it uses the normal 50% × ring falloff.
+ *
+ * Net effect: at a deep zoom, the center of your view gets the rich density
+ * (up to 100%) while the surrounding visible area stays at the comfortable
+ * 50% baseline so nearby traffic is still visible without overwhelming
+ * the scene.
+ */
+export function combinedKeepFraction(
+  altitudeBase: number,
+  normalizedDist: number,
+): number {
+  if (altitudeBase <= 0.5) {
+    return altitudeBase * ringKeepMultiplier(normalizedDist);
+  }
+  const FOCUS_END = 0.2;
+  const FADE_END = 0.4;
+  if (normalizedDist <= FOCUS_END) return altitudeBase;
+  if (normalizedDist <= FADE_END) {
+    const t = (normalizedDist - FOCUS_END) / (FADE_END - FOCUS_END);
+    return altitudeBase + (0.5 - altitudeBase) * t;
+  }
+  return 0.5 * ringKeepMultiplier(normalizedDist);
 }
 
 /**
