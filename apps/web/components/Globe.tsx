@@ -507,28 +507,39 @@ export default function Globe() {
   useEffect(() => {
     const IDLE_MS = 15_000;
     const RETURN_MS = 3_000;
+
+    // NA coverage bounds — matches the worker's tile spread (Anchorage to
+    // Mexico City, east coast to Alaska). Used both for the reminder banner
+    // and the auto-recenter. The altitude cap distinguishes "zoomed into a
+    // specific city within NA" from "zoomed so far out you're viewing the
+    // whole planet".
+    const cameraSeesNA = (pov: {
+      lat: number;
+      lng: number;
+      altitude: number;
+    }): boolean => {
+      const inLat = pov.lat >= 18 && pov.lat <= 62;
+      const inLng = pov.lng >= -165 && pov.lng <= -55;
+      const closeEnough = pov.altitude < 2.5;
+      return inLat && inLng && closeEnough;
+    };
+
     const check = setInterval(() => {
       const globe = globeRef.current;
       if (!globe) return;
       const pov = globe.pointOfView();
+      const seesNA = cameraSeesNA(pov);
+      setOutOfNA(!seesNA);
 
-      // NA coverage bounds — matches the worker's tile spread (Anchorage to
-      // Mexico City, east coast to Alaska). If camera falls outside OR is
-      // zoomed too far out to see NA dominantly, flag as "out of frame".
-      const inLat = pov.lat >= 18 && pov.lat <= 62;
-      const inLng = pov.lng >= -165 && pov.lng <= -55;
-      const closeEnough = pov.altitude < 2.5;
-      setOutOfNA(!(inLat && inLng && closeEnough));
-
-      // Auto-recenter if idle and away from home.
+      // Auto-recenter ONLY fires when the user has been idle AND the camera
+      // is NOT looking at NA. Panning within NA (e.g. zoomed in on Chicago)
+      // should never trigger a jump.
+      if (seesNA) return;
       if (Date.now() - lastInteractionRef.current < IDLE_MS) return;
-      const home: { lat: number; lng: number; altitude: number } = regionRef.current
+      const home: { lat: number; lng: number; altitude: number } = regionRef
+        .current
         ? { lat: regionRef.current.lat, lng: regionRef.current.lon, altitude: 0.45 }
         : { lat: 39, lng: -97, altitude: 1.1 };
-      const dLat = Math.abs(pov.lat - home.lat);
-      const dLng = Math.abs(((pov.lng - home.lng + 540) % 360) - 180);
-      const dAlt = Math.abs(pov.altitude - home.altitude);
-      if (dLat < 3 && dLng < 3 && dAlt < 0.15) return;
       globe.pointOfView(home, RETURN_MS);
       lastInteractionRef.current = Date.now() + RETURN_MS;
     }, 2_000);
