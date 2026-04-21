@@ -51,7 +51,7 @@ type Snapshot = Map<string, AircraftState>;
  * Globe radius in three-globe is 100 units by default, so ~1.4 units is small
  * enough to be unobtrusive at global zoom and recognizable at region zoom.
  */
-const PLANE_SIZE = 1.4;
+const PLANE_SIZE = 1.4 / 3;
 const PLANE_GEOMETRY = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
 
 // TextureLoader uses `Image`, which only exists in the browser. `next/dynamic`
