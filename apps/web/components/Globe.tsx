@@ -157,6 +157,10 @@ export default function Globe() {
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
   const [theme, setTheme] = useState<Theme>("blue-marble");
   const [selected, setSelected] = useState<string | null>(null);
+  // Guard so onGlobeReady doesn't snap the camera back to the default view on
+  // later re-mounts / Strict-Mode double invocations. The initial pan is a
+  // one-time "open the app on North America" gesture.
+  const didInitialPanRef = useRef(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -489,14 +493,35 @@ export default function Globe() {
     };
   }, []);
 
+  // Reminder banner when user rotates out of NA. Combined with the auto-
+  // recenter interval so we only do one poll.
+  const [outOfNA, setOutOfNA] = useState(false);
+  const [naReminderDismissed, setNaReminderDismissed] = useState(false);
+
+  // Re-arm the reminder once the user returns to NA — so if they rotate away
+  // again later, it shows once more.
+  useEffect(() => {
+    if (!outOfNA) setNaReminderDismissed(false);
+  }, [outOfNA]);
+
   useEffect(() => {
     const IDLE_MS = 15_000;
     const RETURN_MS = 3_000;
     const check = setInterval(() => {
       const globe = globeRef.current;
       if (!globe) return;
-      if (Date.now() - lastInteractionRef.current < IDLE_MS) return;
       const pov = globe.pointOfView();
+
+      // NA coverage bounds — matches the worker's tile spread (Anchorage to
+      // Mexico City, east coast to Alaska). If camera falls outside OR is
+      // zoomed too far out to see NA dominantly, flag as "out of frame".
+      const inLat = pov.lat >= 18 && pov.lat <= 62;
+      const inLng = pov.lng >= -165 && pov.lng <= -55;
+      const closeEnough = pov.altitude < 2.5;
+      setOutOfNA(!(inLat && inLng && closeEnough));
+
+      // Auto-recenter if idle and away from home.
+      if (Date.now() - lastInteractionRef.current < IDLE_MS) return;
       const home: { lat: number; lng: number; altitude: number } = regionRef.current
         ? { lat: regionRef.current.lat, lng: regionRef.current.lon, altitude: 0.45 }
         : { lat: 39, lng: -97, altitude: 1.1 };
@@ -505,12 +530,18 @@ export default function Globe() {
       const dAlt = Math.abs(pov.altitude - home.altitude);
       if (dLat < 3 && dLng < 3 && dAlt < 0.15) return;
       globe.pointOfView(home, RETURN_MS);
-      // Prevent immediate re-trigger: bump the idle timer so we don't fire
-      // again until the user has had time to look at the recentred view.
       lastInteractionRef.current = Date.now() + RETURN_MS;
     }, 2_000);
     return () => clearInterval(check);
   }, []);
+
+  const recenterNow = (): void => {
+    const home = regionRef.current
+      ? { lat: regionRef.current.lat, lng: regionRef.current.lon, altitude: 0.45 }
+      : { lat: 39, lng: -97, altitude: 1.1 };
+    globeRef.current?.pointOfView(home, 1_200);
+    lastInteractionRef.current = Date.now() + 1_200;
+  };
 
   // Per-frame dead-reckoning: walk the scene on every rAF and extrapolate
   // each plane mesh from its last known state. react-globe.gl's
@@ -571,6 +602,29 @@ export default function Globe() {
           </div>
         )}
       </div>
+
+      {outOfNA && !naReminderDismissed && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-amber-900/85 border border-amber-500/60 backdrop-blur rounded px-3 py-2 text-xs text-amber-100 shadow-xl flex items-center gap-3 max-w-[520px]">
+          <span aria-hidden className="text-base">🌎</span>
+          <span>
+            This tracker only covers <strong>North America</strong> — aircraft
+            in other regions won&apos;t appear on the globe.
+          </span>
+          <button
+            onClick={recenterNow}
+            className="px-2 py-1 rounded bg-amber-200 text-amber-950 font-semibold hover:bg-amber-100 transition-colors"
+          >
+            Recenter
+          </button>
+          <button
+            onClick={() => setNaReminderDismissed(true)}
+            aria-label="Dismiss"
+            className="text-amber-300 hover:text-amber-100 leading-none"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <div className="absolute top-3 right-3 z-10 flex flex-col gap-2 items-end">
         <RegionPicker onChange={setRegion} />
         <div className="bg-black/60 backdrop-blur rounded px-2 py-1.5">
@@ -699,10 +753,15 @@ export default function Globe() {
           onGlobeReady={() => {
             // Default view: centered on continental US, altitude tuned so CONUS
             // fills most of the viewport while Canada + Mexico remain visible.
-            globeRef.current?.pointOfView(
-              { lat: 39, lng: -97, altitude: 1.1 },
-              0,
-            );
+            // Only run the pan once — Strict Mode or any later re-mount
+            // shouldn't yank the user back to the default view.
+            if (!didInitialPanRef.current) {
+              didInitialPanRef.current = true;
+              globeRef.current?.pointOfView(
+                { lat: 39, lng: -97, altitude: 1.1 },
+                0,
+              );
+            }
             // Expose to window for debugging / Playwright introspection only in dev.
             if (
               process.env.NODE_ENV !== "production" &&
