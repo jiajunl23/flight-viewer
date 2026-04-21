@@ -99,24 +99,42 @@ export function icao24Hash(icao24: string): number {
 }
 
 /**
- * Discrete LOD buckets keyed on camera altitude. Maps to a keep-fraction for
- * hash-based subsampling of planes WITHIN the visible cap. Spatial culling
- * (below) handles the "plane is on the far side of the globe" case — this
- * just controls density within the viewed region.
+ * Altitude-based BASE keep-fraction — sets the ceiling for density at the
+ * current zoom level. Multiplied per-plane by `ringKeepMultiplier` based on
+ * how close the plane is to the view center (see below), so the final
+ * effective density is `base × ring`.
  *
- * Buckets are denser around continental/global view because that's where
- * count matters most. At hub/city zoom (altitude < 0.8) the visible cap is
- * small enough that 100% density is cheap.
+ * 100% only at very low altitude (true zoomed-in hub/airport view). At
+ * everything else, even the inner ring caps below 100% so the page stays
+ * performant.
  */
 export function lodKeepFraction(altitude: number): number {
-  if (altitude <= 0.6) return 1.0; // hub / city — show everything nearby
-  if (altitude <= 0.9) return 0.85;
-  if (altitude <= 1.2) return 0.6;
-  if (altitude <= 1.5) return 0.4;
-  if (altitude <= 1.8) return 0.25;
-  if (altitude <= 2.2) return 0.15;
-  if (altitude <= 2.8) return 0.1;
-  return 0.06;
+  if (altitude <= 0.3) return 1.0; // airport/hub — fully zoomed in
+  if (altitude <= 0.6) return 0.7;
+  if (altitude <= 1.0) return 0.5;
+  if (altitude <= 1.4) return 0.3;
+  if (altitude <= 1.8) return 0.2;
+  if (altitude <= 2.4) return 0.12;
+  if (altitude <= 3.0) return 0.08;
+  return 0.05;
+}
+
+/**
+ * Concentric-ring density falloff relative to view center.
+ * `normalizedDist` = angularDistance(plane, center) / visibleRadius
+ *   0.0 → plane is directly at camera target (full focus)
+ *   1.0 → plane is at the horizon of the visible cap
+ *   1.2 → plane is in the 20% soft-cull margin
+ *
+ * Result is a multiplier applied to the altitude-based base density. The net
+ * effect: planes near where you're looking render densely, planes further out
+ * thin out progressively.
+ */
+export function ringKeepMultiplier(normalizedDist: number): number {
+  if (normalizedDist <= 0.25) return 1.0; // focus zone — full base density
+  if (normalizedDist <= 0.5) return 0.6; // inner ring
+  if (normalizedDist <= 0.8) return 0.3; // outer ring
+  return 0.12; // edge / margin
 }
 
 /**

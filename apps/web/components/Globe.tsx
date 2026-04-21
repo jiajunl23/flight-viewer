@@ -14,6 +14,7 @@ import {
   lodKeepFraction,
   MAX_HORIZON_S,
   reckon,
+  ringKeepMultiplier,
   speedColorHex,
   visibleAngularRadiusRad,
 } from "./DeadReckoning";
@@ -306,19 +307,21 @@ export default function Globe() {
     };
   }, []);
 
-  // Filter out stale rows once per data tick (not per-frame). Dead-reckoning
-  // still extrapolates each visible row every frame via customThreeObjectUpdate.
-  // Pipeline:
+  // Filter out stale rows once per data tick (not per-frame).
   //   1. Stale filter (last_contact past 120s horizon)
   //   2. User filters (country/airline/altitude/on-ground)
-  //   3. Spatial cull — drop planes outside the visible spherical cap
-  //      (+20% margin so panning doesn't pop planes in/out at the edge).
-  //      Selected + favorited planes bypass this so tracked aircraft never
-  //      disappear when you zoom or pan away from them.
-  //   4. Density LOD — hash-based uniform subsample within the visible cap.
+  //   3. Spatial cull — drop planes outside visibleRadius × 1.2 (behind the
+  //      horizon); selected + favorited planes always kept.
+  //   4. Concentric-ring density — effective keep fraction =
+  //        lodKeep  (altitude-based base)
+  //        ×  ringKeepMultiplier(dist / viewRadius)  (distance-based falloff)
+  //      so planes near the camera's center render dense, planes near the
+  //      edge of the visible cap thin out. 100% only happens when the user
+  //      is zoomed deep AND the plane is within the center focus zone.
   const liveData = useMemo(() => {
     const now = Date.now() / 1000;
     const radiusLimit = Math.min(Math.PI, viewRadius * 1.2);
+    const safeRadius = Math.max(0.01, viewRadius);
     return Array.from(snapshot.values()).filter((s) => {
       if (!s.last_contact) return false;
       if (now - s.last_contact > MAX_HORIZON_S) return false;
@@ -326,20 +329,20 @@ export default function Globe() {
 
       const keptForUser =
         s.icao24 === selected || favorites.has(s.icao24);
-
-      if (!keptForUser && s.latitude != null && s.longitude != null) {
-        const d = angularDistanceRad(
-          viewCenter.lat,
-          viewCenter.lng,
-          s.latitude,
-          s.longitude,
-        );
-        if (d > radiusLimit) return false;
-      }
-
       if (keptForUser) return true;
-      if (lodKeep >= 1) return true;
-      return icao24Hash(s.icao24) < lodKeep;
+      if (s.latitude == null || s.longitude == null) return false;
+
+      const d = angularDistanceRad(
+        viewCenter.lat,
+        viewCenter.lng,
+        s.latitude,
+        s.longitude,
+      );
+      if (d > radiusLimit) return false;
+
+      const effectiveKeep = lodKeep * ringKeepMultiplier(d / safeRadius);
+      if (effectiveKeep >= 1) return true;
+      return icao24Hash(s.icao24) < effectiveKeep;
     });
   }, [
     snapshot,
