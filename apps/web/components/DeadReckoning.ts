@@ -86,6 +86,33 @@ export function isEmergency(
 }
 
 /**
+ * Stable hash of an icao24 hex string into [0, 1). Used for density-based
+ * LOD: planes with hash(icao24) < keepFraction stay rendered at low zoom
+ * levels. Because hash is deterministic per icao24, the sampled subset
+ * doesn't flicker frame-to-frame and the spatial distribution stays
+ * roughly uniform (ICAO addresses aren't correlated with current position).
+ */
+export function icao24Hash(icao24: string): number {
+  const n = Number.parseInt(icao24.slice(0, 6), 16);
+  if (Number.isNaN(n)) return 0;
+  return n / 0xffffff;
+}
+
+/**
+ * Discrete LOD buckets keyed on camera altitude. Maps to a keep-fraction for
+ * hash-based subsampling. A bucketed approach (rather than continuous) means
+ * planes don't flicker in and out with tiny zoom changes; they only shift
+ * populations when the user crosses a bucket boundary.
+ */
+export function lodKeepFraction(altitude: number): number {
+  if (altitude <= 0.4) return 1.0; // zoomed into a city — render everything
+  if (altitude <= 0.8) return 0.5;
+  if (altitude <= 1.3) return 0.25;
+  if (altitude <= 2.0) return 0.12;
+  return 0.06; // zoomed all the way out
+}
+
+/**
  * Scale multiplier by ADS-B emitter category. Heavy jets (A5) render bigger,
  * light GA (A1) smaller. Helicopters (A7) small because they're short-range
  * and usually below airliners on the globe.

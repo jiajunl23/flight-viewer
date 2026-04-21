@@ -8,7 +8,9 @@ import type { AircraftState } from "shared";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import {
   categoryScale,
+  icao24Hash,
   isEmergency,
+  lodKeepFraction,
   MAX_HORIZON_S,
   reckon,
   speedColorHex,
@@ -156,6 +158,19 @@ export default function Globe() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
   const [theme, setTheme] = useState<Theme>("blue-marble");
+  // Density LOD — reduces rendered plane count when zoomed out so the per-
+  // frame scene-walk stays cheap. Updates when the user crosses an altitude
+  // bucket boundary (polled at 400ms so tiny zoom wiggles don't flicker).
+  const [lodKeep, setLodKeep] = useState<number>(1.0);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const pov = globeRef.current?.pointOfView();
+      if (!pov) return;
+      const target = lodKeepFraction(pov.altitude);
+      setLodKeep((prev) => (prev !== target ? target : prev));
+    }, 400);
+    return () => clearInterval(interval);
+  }, []);
   const [selected, setSelected] = useState<string | null>(null);
   // Guard so onGlobeReady doesn't snap the camera back to the default view on
   // later re-mounts / Strict-Mode double invocations. The initial pan is a
@@ -267,16 +282,24 @@ export default function Globe() {
 
   // Filter out stale rows once per data tick (not per-frame). Dead-reckoning
   // still extrapolates each visible row every frame via customThreeObjectUpdate.
-  // Also apply user filters here — keeps client-side rendering predictable.
+  // Also apply user filters + density LOD here — keeps client-side rendering
+  // predictable. Selected + favorited aircraft bypass LOD so tracking a
+  // specific plane never drops it when zoomed out.
   const liveData = useMemo(() => {
     const now = Date.now() / 1000;
-    return Array.from(snapshot.values()).filter(
-      (s) =>
-        s.last_contact &&
-        now - s.last_contact <= MAX_HORIZON_S &&
-        aircraftMatches(s, filters),
-    );
-  }, [snapshot, filters]);
+    return Array.from(snapshot.values()).filter((s) => {
+      if (!s.last_contact) return false;
+      if (now - s.last_contact > MAX_HORIZON_S) return false;
+      if (!aircraftMatches(s, filters)) return false;
+      // Always keep user-relevant planes regardless of LOD.
+      if (s.icao24 === selected) return true;
+      if (favorites.has(s.icao24)) return true;
+      // Hash-based uniform subsample; stable so the same planes stay visible
+      // between frames.
+      if (lodKeep >= 1) return true;
+      return icao24Hash(s.icao24) < lodKeep;
+    });
+  }, [snapshot, filters, lodKeep, selected, favorites]);
 
   // Load preferences on sign-in; save when they change (debounced).
   useEffect(() => {
@@ -606,7 +629,14 @@ export default function Globe() {
   return (
     <div ref={containerRef} className="relative flex-1 overflow-hidden">
       <div className="absolute top-3 left-3 z-10 text-xs text-zinc-400 bg-black/50 backdrop-blur px-2 py-1 rounded space-y-0.5">
-        <div>{visibleCount.toLocaleString()} aircraft</div>
+        <div>
+          {visibleCount.toLocaleString()} aircraft
+          {lodKeep < 1 && (
+            <span className="ml-1 text-zinc-600">
+              (of {snapshot.size.toLocaleString()}, {Math.round(lodKeep * 100)}%)
+            </span>
+          )}
+        </div>
         {viewportCount !== null && region && (
           <div className="text-emerald-400">
             {region.name}: {viewportCount} live (1 Hz)
