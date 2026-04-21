@@ -446,18 +446,19 @@ export default function Globe() {
 
         // Position popover near the selected aircraft.
         if (selectedMesh && popoverRef.current) {
-          // Project world position to screen via Three's camera + canvas size.
-          // Using non-null assertion since selectedMesh is set inside the
-          // traverse closure above when isSel is true.
           const m = selectedMesh as PlaneMesh;
           projVec.copy(m.position).project(globe.camera());
           const canvas = globe.renderer().domElement;
           const x = (projVec.x * 0.5 + 0.5) * canvas.clientWidth;
           const y = (-projVec.y * 0.5 + 0.5) * canvas.clientHeight;
-          const behindCamera = projVec.z > 1; // plane is on the far side of globe
+          const behindCamera = projVec.z > 1; // plane is on the far side
+          const offscreen =
+            x < -300 || x > canvas.clientWidth + 300 ||
+            y < -300 || y > canvas.clientHeight + 300;
+          const hidden = behindCamera || offscreen;
           popoverRef.current.style.transform = `translate3d(${x + 16}px, ${y + 12}px, 0)`;
-          popoverRef.current.style.opacity = behindCamera ? "0" : "1";
-          popoverRef.current.style.pointerEvents = behindCamera ? "none" : "auto";
+          popoverRef.current.style.opacity = hidden ? "0" : "1";
+          popoverRef.current.style.pointerEvents = hidden ? "none" : "auto";
         }
       }
       rafId = requestAnimationFrame(tick);
@@ -485,10 +486,21 @@ export default function Globe() {
       <FiltersPanel value={filters} onChange={setFilters} />
       {selectedState && (
         <div
+          // Re-mount the popover each time the selected icao24 changes so the
+          // initial transform starts off-screen rather than at the previous
+          // plane's position. This is what eliminates the mid-air flash during
+          // a rapid plane-to-plane switch.
+          key={selectedState.icao24}
           ref={popoverRef}
           // Positioned via inline transform from the rAF loop (follows the
-          // selected aircraft on screen). Initial off-screen until first frame.
-          style={{ transform: "translate3d(-9999px, -9999px, 0)" }}
+          // selected aircraft on screen). Initial off-screen + transparent;
+          // the rAF loop reveals it on the first frame a valid screen
+          // position is computed.
+          style={{
+            transform: "translate3d(-9999px, -9999px, 0)",
+            opacity: 0,
+            transition: "opacity 120ms ease-out",
+          }}
           className={`absolute top-0 left-0 z-20 backdrop-blur rounded px-3 py-2 text-xs text-zinc-200 max-w-[280px] space-y-1 shadow-xl ${
             isEmergency(selectedState.emergency, selectedState.squawk)
               ? "bg-red-950/95 border border-red-500"
@@ -608,7 +620,10 @@ export default function Globe() {
               }).__globe = globeRef.current;
               (window as unknown as {
                 __select?: (icao24: string | null) => void;
-              }).__select = setSelected;
+              }).__select = (id) => {
+                selectedRef.current = id;
+                setSelected(id);
+              };
             }
           }}
           // Custom layer: one THREE.Mesh per aircraft. react-globe.gl handles
@@ -621,12 +636,19 @@ export default function Globe() {
           }}
           onCustomLayerClick={(d: object) => {
             const state = d as AircraftState;
+            // Sync-update the ref BEFORE scheduling the React state change so
+            // the next rAF frame already reflects the new selection — avoids
+            // the 1-2 frame flash where the old plane stays highlighted.
+            selectedRef.current = state.icao24;
             setSelected(state.icao24);
           }}
           // Clicking empty globe surface clears the selected plane so the
           // popover dismisses. Clicks in the black background around the
           // globe are handled by the container's onClick below.
-          onGlobeClick={() => setSelected(null)}
+          onGlobeClick={() => {
+            selectedRef.current = null;
+            setSelected(null);
+          }}
           customThreeObjectUpdate={(obj: object, d: object) => {
             // Fires once when the data row changes (e.g. new server tick).
             // Per-frame interpolation happens in the rAF loop below.
