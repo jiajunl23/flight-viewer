@@ -557,6 +557,14 @@ export default function Globe() {
   // still treat that as a click on that plane.
   const lastHoveredRef = useRef<string | null>(null);
   const lastHoverLeftAtRef = useRef<number>(0);
+  // react-globe.gl fires BOTH onCustomLayerClick and onGlobeClick for a
+  // single click when the raycast finds a plane mesh AND the globe surface
+  // behind it. Without a guard, the globe-click fallback runs microseconds
+  // after the layer-click selection, sometimes clearing it back to null
+  // (when a stray mousemove nulled hoveredRef mid-click). Timestamp the
+  // layer click and skip globe-click if it arrives right after.
+  const lastLayerClickAtRef = useRef<number>(0);
+  const GLOBE_CLICK_SUPPRESS_MS = 200;
   const HOVER_CLICK_GRACE_MS = 300;
   const [cursorIsPointer, setCursorIsPointer] = useState(false);
 
@@ -915,6 +923,7 @@ export default function Globe() {
             // the next rAF frame already reflects the new selection.
             selectedRef.current = state.icao24;
             setSelected(state.icao24);
+            lastLayerClickAtRef.current = Date.now();
           }}
           onCustomLayerHover={(d: object | null) => {
             const newHover = d ? (d as AircraftState).icao24 : null;
@@ -937,6 +946,14 @@ export default function Globe() {
           // user was aiming for that plane. Only fall through to deselect
           // when there's no recent hover to promote.
           onGlobeClick={() => {
+            // If onCustomLayerClick just handled this same click, don't let
+            // the globe-surface fallback clobber the selection it just made.
+            if (
+              Date.now() - lastLayerClickAtRef.current <
+              GLOBE_CLICK_SUPPRESS_MS
+            ) {
+              return;
+            }
             if (hoveredRef.current) {
               selectedRef.current = hoveredRef.current;
               setSelected(hoveredRef.current);
