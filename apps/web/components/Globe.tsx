@@ -64,7 +64,25 @@ function getPlaneTexture(): THREE.Texture {
 type PlaneMesh = THREE.Mesh & {
   __lastColor?: number;
   __icao24?: string;
+  __halo?: THREE.Mesh;
 };
+
+// Radar-style translucent ring that sits behind live-tracked planes. Shared
+// geometry + material across every halo — we only ever toggle `.visible` and
+// inherit scale from the parent plane mesh.
+const HALO_GEOMETRY = new THREE.RingGeometry(0.55, 0.95, 32);
+let _haloMaterial: THREE.MeshBasicMaterial | null = null;
+function getHaloMaterial(): THREE.MeshBasicMaterial {
+  if (_haloMaterial) return _haloMaterial;
+  _haloMaterial = new THREE.MeshBasicMaterial({
+    color: 0xa855f7,
+    transparent: true,
+    opacity: 0.65,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  return _haloMaterial;
+}
 
 // Shared no-op for selected planes — replaces Mesh.raycast so the raycaster
 // skips hit-testing the currently-selected mesh. Unlike mesh.layers.disableAll(),
@@ -95,6 +113,16 @@ function makePlaneMesh(icao24: string, initialColor = 0xff6b6b): PlaneMesh {
   mesh.renderOrder = 1; // draw planes after globe
   mesh.__lastColor = initialColor;
   mesh.__icao24 = icao24;
+
+  // Attach a halo ring as a child so it inherits position + tangent rotation
+  // + scale automatically. Kept hidden until the plane is live-tracked.
+  const halo = new THREE.Mesh(HALO_GEOMETRY, getHaloMaterial());
+  halo.visible = false;
+  halo.renderOrder = 0; // draw behind the plane silhouette
+  halo.raycast = NO_RAYCAST; // must not steal clicks from its own plane
+  mesh.add(halo);
+  mesh.__halo = halo;
+
   return mesh;
 }
 
@@ -171,21 +199,26 @@ function updatePlaneMesh(
   mesh.scale.setScalar(scale);
 
   // Color precedence: selected → cyan, hovered → white, emergency → red,
-  // live (1 Hz viewport) → purple, otherwise speed band.
+  // otherwise speed band. "Live" is conveyed by the halo ring, not the body
+  // tint — so you can still see the plane's speed band underneath the halo.
   const colorHex = isSelected
     ? 0x22d3ee
     : isHovered
       ? 0xffffff
       : isEmergency(state.emergency, state.squawk)
         ? 0xff0000
-        : isLive
-          ? 0xa855f7
-          : speedColorHex(state.velocity ?? 0);
+        : speedColorHex(state.velocity ?? 0);
   if (mesh.__lastColor !== colorHex) {
     (mesh.material as THREE.MeshBasicMaterial).color.setHex(colorHex);
     mesh.__lastColor = colorHex;
   }
-  mesh.renderOrder = isSelected ? 3 : isHovered ? 2 : isLive ? 2 : 1;
+  mesh.renderOrder = isSelected ? 3 : isHovered ? 2 : 1;
+
+  // Halo: show when live, but suppress on the selected plane (cyan + larger
+  // size already dominate visual attention there).
+  if (mesh.__halo) {
+    mesh.__halo.visible = isLive && !isSelected;
+  }
 }
 
 export default function Globe() {
@@ -742,10 +775,10 @@ export default function Globe() {
               {region.name}: {viewportCount} live (1 Hz)
             </span>
             <span
-              className="inline-block h-2 w-2 rounded-sm bg-purple-500"
+              className="inline-block h-2.5 w-2.5 rounded-full border-[1.5px] border-purple-400"
               aria-hidden
             />
-            <span className="text-[10px] text-purple-300/80">purple = live</span>
+            <span className="text-[10px] text-purple-300/80">ring = live</span>
           </div>
         )}
       </div>
