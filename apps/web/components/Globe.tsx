@@ -66,20 +66,9 @@ type PlaneMesh = THREE.Mesh & {
   __icao24?: string;
 };
 
-// Live-plane color fluctuates between emerald-400 (the same green used by the
-// "Chicago: N live (1 Hz)" HUD label) and white, via a sinusoidal lerp.
-const LIVE_GREEN = { r: 0x34, g: 0xd3, b: 0x99 }; // tailwind emerald-400
-const LIVE_WHITE = { r: 0xff, g: 0xff, b: 0xff };
-const LIVE_PULSE_PERIOD_MS = 1200; // full green↔white↔green cycle ≈ 1.2 s
-
-function liveColorAtFrame(nowMs: number): number {
-  // t ∈ [0, 1]: 0 = green, 1 = white.
-  const t = 0.5 + 0.5 * Math.sin((nowMs * 2 * Math.PI) / LIVE_PULSE_PERIOD_MS);
-  const r = Math.round(LIVE_GREEN.r + (LIVE_WHITE.r - LIVE_GREEN.r) * t);
-  const g = Math.round(LIVE_GREEN.g + (LIVE_WHITE.g - LIVE_GREEN.g) * t);
-  const b = Math.round(LIVE_GREEN.b + (LIVE_WHITE.b - LIVE_GREEN.b) * t);
-  return (r << 16) | (g << 8) | b;
-}
+// Live-plane body color — tailwind emerald-400, same green as the HUD's
+// "Chicago: N live (1 Hz)" label + legend swatch for palette consistency.
+const LIVE_COLOR_HEX = 0x34d399;
 
 // Shared no-op for selected planes — replaces Mesh.raycast so the raycaster
 // skips hit-testing the currently-selected mesh. Unlike mesh.layers.disableAll(),
@@ -186,9 +175,7 @@ function updatePlaneMesh(
   mesh.scale.setScalar(scale);
 
   // Color precedence: selected → cyan, hovered → white, emergency → red,
-  // live → sinusoidal lerp between emerald-400 and white (matches the green
-  // of the "N live (1 Hz)" HUD label so the palette is self-consistent),
-  // otherwise speed band.
+  // live → emerald-400 (matches the HUD label), otherwise speed band.
   const colorHex = isSelected
     ? 0x22d3ee
     : isHovered
@@ -196,7 +183,7 @@ function updatePlaneMesh(
       : isEmergency(state.emergency, state.squawk)
         ? 0xff0000
         : isLive
-          ? liveColorAtFrame(nowMs)
+          ? LIVE_COLOR_HEX
           : speedColorHex(state.velocity ?? 0);
   if (mesh.__lastColor !== colorHex) {
     (mesh.material as THREE.MeshBasicMaterial).color.setHex(colorHex);
@@ -759,10 +746,10 @@ export default function Globe() {
               {region.name}: {viewportCount} live (1 Hz)
             </span>
             <span
-              className="inline-block h-2 w-2 rounded-sm bg-emerald-400 animate-pulse"
+              className="inline-block h-2 w-2 rounded-sm bg-emerald-400"
               aria-hidden
             />
-            <span className="text-[10px] text-emerald-300/80">pulsing = live</span>
+            <span className="text-[10px] text-emerald-300/80">green = live</span>
           </div>
         )}
       </div>
