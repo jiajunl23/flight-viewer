@@ -134,7 +134,7 @@ Full continent refresh every 60 s (20 tiles × 3 s). No auth, no token managemen
 
 ### packages/shared
 
-Shared TypeScript: `AircraftState` type, OpenSky state-vector parser, zod-validated env, typed Supabase client factories.
+Shared TypeScript: `AircraftState` type, OpenSky state-vector parser (dormant — kept in case Railway egress is ever reachable from OpenSky again), zod-validated env, typed Supabase client factories.
 
 ## Database
 
@@ -169,6 +169,12 @@ react-globe.gl's raycaster fires events for both the custom layer (plane meshes)
 - Hover-leave grace. `lastHoveredRef` + `lastHoverLeftAtRef` record the last plane the cursor left. If the user clicks the globe within 300 ms of leaving a plane (typical cursor jitter between mousedown and mouseup on a moving mesh), the click commits to that plane instead of deselecting.
 
 The selected mesh also has `raycast = NO_RAYCAST` so clicks pass straight through to whatever plane is nearest underneath — one-click selection switching without having to click the globe surface first to deselect.
+
+## Camera UX
+
+- **Idle auto-recenter**: the canvas tracks `lastInteractionRef` on `pointerdown`. After ~15 s of no interaction, a 1.2 s tween returns the camera to "home" — the active region's hub if one is picked, otherwise the CONUS default (lat 39, lng -97, altitude 1.1). Stops users getting lost over the Pacific and forgetting how to get back.
+- **Out-of-NA reminder**: if `pointOfView().lat/lng` falls outside the NA bounding box (`lat ∈ [18, 62]`, `lng ∈ [-165, -55]`) with altitude < 2.5, a dismissible toast prompts "You've panned outside North America — click to recenter." Data coverage is NA-only, so a view of the Pacific looks broken without this hint.
+- **Region picker zoom**: picking a region flies to altitude 0.15 (airport-ish zoom) — tight enough that 250 m/s motion is perceptible as ~1 px/s on a 1000 px window. Altitude 0.45 (the original default) made flights look frozen.
 
 ## Dead-reckoning math
 
