@@ -60,12 +60,19 @@ Server-side cadence is ~1 s (viewport) to ~60 s (per-tile Railway refresh). Clie
 
 ## Plane rendering (FR24-style 2D icons)
 
-Each aircraft is a flat `THREE.PlaneGeometry` (~0.47 × 0.47 units on a radius-100 globe; `PLANE_SIZE = 1.4 / 3`) textured with `apps/web/public/plane.svg` — a white airliner silhouette with a black outline, nose pointing up at rotation=0. The mesh is oriented **tangent to the globe surface**: a local basis is built at the aircraft's lat/lng (east, north, up) from two nearby `globe.getCoords` samples, then the mesh rotates by `-true_track` around its local Z (surface normal) so the nose points in the direction of travel. Color-tints the texture via `MeshBasicMaterial.color`:
+Each aircraft is a flat `THREE.PlaneGeometry` (~0.47 × 0.47 units on a radius-100 globe; `PLANE_SIZE = 1.4 / 3`) textured with `apps/web/public/plane.svg` — a white airliner silhouette with a black outline, nose pointing up at rotation=0. The mesh is oriented **tangent to the globe surface**: a local basis is built at the aircraft's lat/lng (east, north, up) from two nearby `globe.getCoords` samples, then the mesh rotates by `-true_track` around its local Z (surface normal) so the nose points in the direction of travel. Color-tints the texture via `MeshBasicMaterial.color` — precedence (highest wins):
 
-- speed band (red → orange → yellow → lime → green) for baseline planes
-- **purple** when the plane is in the current `/api/viewport` response (live mode)
-- cyan for the selected plane, white for hovered, red for emergency squawks
-- scale boost 1× up to `lodKeep` 0.5, then ramps to 3× at `lodKeep` ≤ 0.2 so thinned-out low-zoom views stay readable
+- **selected** → cyan (`#22d3ee`), 1.8× scale, raycast disabled so clicks pass through to neighbors for one-click selection switching
+- **hovered** → white, 1.35× scale
+- **emergency** (`emergency` field set or squawk 7500/7600/7700) → red
+- **live** (icao24 in the current `/api/viewport` response) → emerald-400 (`#34d399`), same green as the "N live (1 Hz)" HUD label for palette consistency
+- baseline → speed band (red→orange→yellow→lime→green from 0 m/s to >250 m/s)
+
+Size:
+
+- per-aircraft: base × `categoryScale(emitter cat)` — heavies 1.35×, light GA 0.7×, rotorcraft 0.6×
+- hover/selected boost above (1.35× / 1.8×)
+- LOD boost: 1× down to `lodKeep` 0.5, then ramps piecewise (1.5× @ 0.5, 2× @ 0.4, 3× @ 0.2) so sparsely-sampled low-zoom views stay readable
 
 Why not 3D meshes or sprites:
 - **3D cones**: looked like blobs and didn't read as aircraft at globe scale (earlier iteration).
@@ -142,6 +149,26 @@ See `supabase/migrations/0001_init.sql`.
 2. Frontend components use `@clerk/nextjs` helpers (e.g. `<Show when="signed-in">`) to gate UI.
 3. For Supabase reads/writes against RLS-protected tables, the API route creates a Supabase client via `createClient(url, anonKey, { accessToken: async () => clerkAuth.getToken() })` — this is the **native Clerk↔Supabase third-party integration**, not the deprecated "supabase" JWT template. The token is read fresh on every request so RLS always sees the current user.
 4. Supabase accepts the Clerk-issued JWT because Clerk is registered as a third-party auth provider in the Supabase dashboard, and RLS policies check `auth.jwt() ->> 'sub' = user_id`.
+
+## Render filter pipeline
+
+Every data tick (Realtime batch flush ~500 ms, or region viewport poll) rebuilds `liveData` — the actual array of planes fed to react-globe.gl — from `snapshot`. The filter chain runs in order:
+
+1. **Stale** — drop rows where `now − last_contact > MAX_HORIZON_S` (300 s). This is the stale horizon deliberately kept well above the 60 s happy-path tile rotation so a burst of adsb.lol 429s doesn't make hubs vanish.
+2. **Selected + favorited always kept.** These bypass everything below.
+3. **Spatial cull** — drop planes outside `viewRadius × 1.2`. `viewRadius` is `min(horizon, FOV-constrained)`. The FOV-constrained radius solves `sin(θ)/((1+h) − cos(θ)) = tan(fov/2)` for θ (three.js default vertical FOV is 50°). At low altitudes the horizon is far wider than what the camera actually shows; using horizon alone kept ~7× too many planes, so the FOV-aware cap is the primary spatial filter below ~altitude 1.4.
+4. **Density LOD** — `icao24Hash(s.icao24) < lodKeep`. `lodKeep = lodKeepFraction(altitude)` is linearly interpolated between breakpoints (100% at 0.05 → 50% at 0.6 → 35% at 0.9 → 20% at 1.3 → 5% at 2.5 → 2% global) so a zoom nudge shifts keep continuously instead of stepping. The icao24 hash is deterministic per plane so the visible subset is stable across frames — same subset as planes move (lets you watch motion without popping), different subset as you zoom.
+
+The HUD counter shows `visibleCount / snapshot.size` (the *true* on-screen ratio) rather than `lodKeep`, because most of the reduction comes from spatial culling before LOD even runs.
+
+## Click + hover interaction
+
+react-globe.gl's raycaster fires events for both the custom layer (plane meshes) and the globe surface behind it. On a single click it can fire **both** `onCustomLayerClick` and `onGlobeClick`. Two guards keep selection reliable:
+
+- `lastLayerClickAtRef` timestamp. Stamped in `onCustomLayerClick`. `onGlobeClick` early-returns if it fires within 200 ms, so the globe-surface fallback can't clobber a selection the layer-click just made.
+- Hover-leave grace. `lastHoveredRef` + `lastHoverLeftAtRef` record the last plane the cursor left. If the user clicks the globe within 300 ms of leaving a plane (typical cursor jitter between mousedown and mouseup on a moving mesh), the click commits to that plane instead of deselecting.
+
+The selected mesh also has `raycast = NO_RAYCAST` so clicks pass straight through to whatever plane is nearest underneath — one-click selection switching without having to click the globe surface first to deselect.
 
 ## Dead-reckoning math
 
